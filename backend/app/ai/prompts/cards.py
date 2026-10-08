@@ -32,6 +32,7 @@ Return JSON only:
       "content": "The explanation. Markdown and LaTeX allowed.",
       "takeaway": "One line the student should remember.",
       "sequence": 1,
+      "source_number": 1,
       "supported_by": "A short quote from the reference material above that
                        supports this card."
     }}
@@ -39,6 +40,7 @@ Return JSON only:
 }}
 
 card_type is CONCEPT or FORMULA for BASIC cards.
+source_number is the number of the single [Source N] block you relied on most.
 If the reference material cannot support {count} cards, return fewer.
 If it supports none, return {{"cards": []}}."""
 
@@ -65,14 +67,24 @@ Return JSON only:
       "content": "The explanation. Markdown and LaTeX allowed.",
       "takeaway": "One line the student should remember.",
       "sequence": 1,
+      "source_number": 1,
       "supported_by": "A short quote from the reference material above that
                        supports this card."
     }}
   ]
 }}
 
-card_type is TRAP, FORMULA, CONCEPT or SHORTCUT.
-Prefer TRAP and SHORTCUT where the material supports them: those are what
-separate a good score from a top rank.
+card_type is TRAP, FORMULA, CONCEPT or SHORTCUT. source_number is the number
+of the single [Source N] block you relied on most.
+
+These cards exist for the student to NOT lose marks. A card that merely
+restates a definition is worthless here -- that is what BASIC mode is for.
+Every ADVANCED card must answer one of:
+  - What does a candidate get WRONG here, and why? (TRAP)
+  - What is the exact formula or condition, with its edge cases? (FORMULA)
+  - How do I answer this faster under time pressure? (SHORTCUT)
+  - Which two similar things are confused, and how do they differ? (TRAP)
+
+Write at least half as TRAP or SHORTCUT where the material allows.
 If the reference material cannot support {count} cards, return fewer.
 If it supports none, return {{"cards": []}}."""

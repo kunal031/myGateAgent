@@ -31,7 +31,20 @@ class GroundedContext:
 
     @property
     def provenance(self) -> str:
+        """All sources in the context. Used only when a card names none."""
         return " | ".join(self.citations)
+
+    def cite(self, source_number: int | None) -> tuple[str, str]:
+        """Resolve a 1-based source number to (citation, chunk_id).
+
+        A card that names the one source it used gets a citation the student
+        can actually open. Listing every retrieved page, as the first version
+        did, is not a citation -- it is a disclaimer.
+        """
+        if source_number and 1 <= source_number <= len(self.citations):
+            index = source_number - 1
+            return self.citations[index], str(self.chunk_ids[index])
+        return self.provenance, ",".join(str(c) for c in self.chunk_ids)
 
 
 def build_context(matches: list[Match], *, min_chars: int = 400) -> GroundedContext:

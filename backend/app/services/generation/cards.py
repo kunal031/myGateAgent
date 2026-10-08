@@ -96,6 +96,8 @@ def generate_cards_for_concept(
             logger.warning("Rejected ungrounded card %r on %s", title, concept.name)
             continue
 
+        citation, chunk_ids = context.cite(item.get("source_number"))
+
         card_type = (item.get("card_type") or "CONCEPT").upper()
         if card_type not in VALID_TYPES:
             card_type = "CONCEPT"
@@ -114,8 +116,8 @@ def generate_cards_for_concept(
             takeaway=takeaway,
             difficulty="Standard GATE",
             base_weight=1,
-            provenance=context.provenance[:2000],
-            source_chunk_ids=",".join(str(c) for c in context.chunk_ids)[:200],
+            provenance=citation[:2000],
+            source_chunk_ids=chunk_ids[:200],
             review_status="pending",
         )
         db.add(card)
