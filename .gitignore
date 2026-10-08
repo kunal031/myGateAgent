@@ -37,6 +37,7 @@ backend/data/transcripts/
 
 # Runtime state (quota counters, job progress)
 backend/data/.ratelimit_*.json
+backend/data/*.log
 
 # Derived retrieval indexes — rebuildable from source_chunks via
 # POST /api/agent/index/build
