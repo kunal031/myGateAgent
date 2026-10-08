@@ -269,11 +269,20 @@ Rate-limited to stay inside the ~500/day grounding budget.
 
 ## 6. Build order
 
-### Phase 0 — Foundation repair *(do first, everything else rests on it)*
-`git init` + `.gitignore` (exclude `venv/`, `node_modules/`, `.next/`, `*.db`,
-`data/documents/`, `data/chroma_db/`, `.env`) · `requirements.txt` ·
-fix `\\n` escaping + re-seed · wire `useSearchParams` into quiz · fix CORS ·
-`lifespan` handler · move feed ranking into SQL · `.env` + config for the Gemini key.
+### Phase 0 — Foundation repair — **DONE** (branch `feat/phase-0-foundation`)
+- [x] `git init`, `.gitignore`, monorepo (removed the nested `frontend/.git`)
+- [x] `requirements.txt` pinned + `.env.example`
+- [x] `\n` escaping fixed + `cli/reseed.py` (study history preserved)
+- [x] `useSearchParams` wired into quiz — un-breaks 3 nav paths + the Test page
+- [x] **Cartesian-product join bug fixed** (found during verification, not in the
+      original audit: quiz served 3 of 5 questions, feed 30 rows for 6 cards)
+- [x] CORS restricted to real origins; `lifespan` replaces `on_event`
+- [x] Settings read `.env`; `/api/health` reports `gemini_configured`
+- [x] eslint 0 errors / 0 warnings; `tsc` clean; `next build` passes
+- [ ] Feed ranking into SQL — deferred to Phase 1 with the new schema
+
+Still open from the audit, by design: the agent remains a string template
+(replaced in Phase 4) and RAG still cannot read handwriting (Phase 1).
 
 ### Phase 1 — Continuous source ingestion
 Schema for `sources` / `source_chunks` with hashing + versioning · `data/inbox/` drop
