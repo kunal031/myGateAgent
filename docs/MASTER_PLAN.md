@@ -312,7 +312,13 @@ Gemini chat, 3 languages, context-aware, grounded + cited.
 ### Phase 5 — Analytics
 Feed analysis + performance analytics, both surfaces.
 
-### Phase 5b — Mobile responsiveness *(newly scoped)*
+### Phase 5b — Mobile-first redesign, light theme *(newly scoped)*
+
+**Design direction: light theme**, following Dribbble shot 26961414 ("School
+Education Mobile App"); reference screenshot goes in `docs/design/`. This
+replaces the current dark slate-950 shell, so all five existing pages are
+restyled. Mobile is the primary target, desktop the wider case.
+
 The current shell is desktop-only: `layout.tsx` sets `ml-64` unconditionally and
 the sidebar is `w-60 fixed`, so on a 390px phone 256px of 390px is margin,
 leaving ~134px usable. There is no hamburger, drawer, or mobile nav, and only 10
