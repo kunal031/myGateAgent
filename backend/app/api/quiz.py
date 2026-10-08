@@ -24,7 +24,14 @@ def get_quiz_questions(
     limit: int = Query(default=10, le=50),
     db: Session = Depends(get_db)
 ):
-    query = db.query(Question).join(Subject).join(Topic)
+    # Explicit ON clauses: a bare .join(Subject).join(Topic) makes SQLAlchemy
+    # join topics to subjects (via Subject.topics) instead of to questions,
+    # producing a cartesian product.
+    query = (
+        db.query(Question)
+        .join(Subject, Question.subject_id == Subject.id)
+        .join(Topic, Question.topic_id == Topic.id)
+    )
     
     if subject_slug and subject_slug != "all":
         query = query.filter(Subject.slug == subject_slug)

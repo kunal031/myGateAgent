@@ -13,7 +13,13 @@ def get_feed(
     limit: int = Query(default=20, le=50),
     db: Session = Depends(get_db)
 ):
-    query = db.query(FeedCard).join(Subject).join(Topic)
+    # Explicit ON clauses: see the note in api/quiz.py. A bare chained join
+    # here inflated 6 cards into 30 rows.
+    query = (
+        db.query(FeedCard)
+        .join(Subject, FeedCard.subject_id == Subject.id)
+        .join(Topic, FeedCard.topic_id == Topic.id)
+    )
     
     if subject_slug and subject_slug != "all":
         query = query.filter(Subject.slug == subject_slug)
