@@ -13,6 +13,10 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 
 from ..core.database import Base
+# Subject and Topic must be registered on the same metadata before these
+# foreign keys can resolve. Importing them here means `from .sources import
+# Source` works standalone, rather than only after models.py was imported.
+from .models import Subject, Topic  # noqa: F401
 
 
 class SourceKind:
