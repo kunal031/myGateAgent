@@ -57,9 +57,17 @@ def ingest_file(db: Session, path: Path, *, max_pages: int | None = None) -> dic
     )
     if existing is None:
         db.add(source)
-        db.flush()
+        db.commit()  # close the write transaction before the slow part
 
+    source_id = source.id
+
+    # Extraction is the slow phase: a scanned file is minutes of rate-limited
+    # vision calls. Holding a write transaction across it blocks every other
+    # writer for that whole time, which is what made concurrent generation
+    # fail with "database is locked". Nothing is written until it finishes.
+    db.close()
     pages = extract_pdf_pages(path, content_hash, max_pages=max_pages)
+    source = db.query(Source).filter(Source.id == source_id).first()
 
     chunk_count = 0
     for page in pages:
@@ -67,7 +75,7 @@ def ingest_file(db: Session, path: Path, *, max_pages: int | None = None) -> dic
             duplicate = (
                 db.query(SourceChunk)
                 .filter(
-                    SourceChunk.source_id == source.id,
+                    SourceChunk.source_id == source_id,
                     SourceChunk.page_number == page["page_number"],
                     SourceChunk.chunk_index == index,
                 )
@@ -76,7 +84,7 @@ def ingest_file(db: Session, path: Path, *, max_pages: int | None = None) -> dic
             if duplicate:
                 continue
             db.add(SourceChunk(
-                source_id=source.id,
+                source_id=source_id,
                 page_number=page["page_number"],
                 chunk_index=index,
                 content=body,
