@@ -183,8 +183,24 @@ A `mode` dimension on content, driving selection:
 | **ADVANCED** | Everything GATE actually tests repeatedly: traps, formulas, edge cases, high-yield derivations | Textbooks + AIR-50 handwritten notes + PYQ patterns |
 | **REVISION + QUESTION HOUR** | Rapid recall of cards already seen, then GATE-mode questions on those exact cards | PYQ books |
 
+**Ordering within a mode (implemented).** A topic is broken into ordered
+`Concept` rows, each with a `sequence` and declared prerequisites. In BASIC
+mode the feed is ordered by that teaching sequence, not by rank — opening a
+chapter for the first time starts at the beginning and walks forward. In
+ADVANCED mode, mistake-weighted ranking takes over, which is what surfaces
+weak areas first once the basics are known.
+
 Gating is advisory, not locked — BASIC completion on a topic unlocks a
 recommendation to advance, you can always override.
+
+**Generation is grounded, and refuses when sources are thin.** Three
+mechanisms, structural rather than prompt-based: generation is closed-book
+over retrieved chunks only; each card must quote its supporting line, and a
+card whose quote is absent from the context is dropped before saving; every
+stored card carries its source chunk ids and page citation. Observed working
+— run against the silly-mistakes log (which records errors rather than
+teaching concepts), the model returned zero cards instead of inventing
+them.
 
 ### 5.2 Escalation system
 
