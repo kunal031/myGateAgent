@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-import fitz  # PyMuPDF
+import pymupdf  # modern import; the old `fitz` alias is deprecated
 import chromadb
 from chromadb.config import Settings
 
@@ -22,7 +22,7 @@ def extract_text_from_pdf(pdf_path: str) -> List[Dict[str, Any]]:
     """Extracts text page by page with metadata from a PDF file."""
     pages_data = []
     try:
-        doc = fitz.open(pdf_path)
+        doc = pymupdf.open(pdf_path)
         file_name = os.path.basename(pdf_path)
         for page_num in range(len(doc)):
             page = doc[page_num]
