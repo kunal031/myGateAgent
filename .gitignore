@@ -24,9 +24,13 @@ next-env.d.ts
 
 # ---- Large ingested sources (683 MB; kept local, not in git) ----
 backend/data/documents/
+backend/data/inbox/
 backend/data/chroma_db/
 backend/data/page_images/
 backend/data/transcripts/
+
+# Runtime state (quota counters, job progress)
+backend/data/.ratelimit_*.json
 
 # ---- OS / editor ----
 .DS_Store
