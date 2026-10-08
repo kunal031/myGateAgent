@@ -49,7 +49,18 @@ def main() -> None:
         ready, thin, done, cards = [], [], 0, 0
 
         for topic in topics:
-            if db.query(Concept).filter(Concept.topic_id == topic.id).count():
+            has_concepts = (
+                db.query(Concept).filter(Concept.topic_id == topic.id).count() > 0
+            )
+            has_cards = (
+                db.query(FeedCard).filter(FeedCard.topic_id == topic.id)
+                .filter(FeedCard.concept_id.isnot(None)).count() > 0
+            )
+            # A topic with concepts but no cards is half-finished: concept
+            # generation succeeded and card generation did not, or was never
+            # run. Skipping it on "already has concepts" would strand it
+            # permanently, so only a topic with both is considered done.
+            if has_concepts and has_cards:
                 done += 1
                 continue
             (ready if topic_is_ready(db, topic) else thin).append(topic)
@@ -67,8 +78,12 @@ def main() -> None:
         for topic in ready:
             print(f"\n{topic.name}")
             try:
+                # Returns [] when concepts already exist, which is fine:
+                # the card passes below still run for them.
                 concepts = generate_concepts_for_topic(db, topic.id)
-                print(f"   {len(concepts)} concepts")
+                existing = db.query(Concept).filter(
+                    Concept.topic_id == topic.id).count()
+                print(f"   {len(concepts) or existing} concepts")
                 for mode in (StudyMode.BASIC, StudyMode.ADVANCED):
                     result = generate_cards_for_topic(
                         db, topic.id, mode, args.per_concept)
