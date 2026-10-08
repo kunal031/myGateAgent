@@ -64,6 +64,23 @@ class FeedCard(Base):
     subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
     topic_id = Column(Integer, ForeignKey("topics.id"), nullable=False)
     
+    # Ordered study unit this card teaches. Nullable so the hand-written
+    # seed cards predating the concept model keep working.
+    concept_id = Column(Integer, ForeignKey("concepts.id"), nullable=True, index=True)
+
+    # Which pass through the chapter this card belongs to: BASIC introduces,
+    # ADVANCED goes deep, REVISION recalls.
+    mode = Column(String(20), default="ADVANCED", index=True)
+
+    # Position within the concept, so BASIC can be walked in order.
+    sequence = Column(Integer, default=0)
+
+    # Where this card came from. Generated cards must cite a source chunk;
+    # see services/generation. Empty means hand-authored seed content.
+    provenance = Column(Text, default="")
+    source_chunk_ids = Column(String(200), default="")
+    review_status = Column(String(20), default="approved", index=True)
+
     card_type = Column(String(20), default="CONCEPT")  # TRAP, FORMULA, CONCEPT, SHORTCUT
     title = Column(String(200), nullable=False)
     content = Column(Text, nullable=False)
