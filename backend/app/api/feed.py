@@ -12,7 +12,9 @@ router = APIRouter(prefix="/api/feed", tags=["Feed"])
 @router.get("")
 def get_feed(
     subject_slug: str | None = None,
+    topic_slug: str | None = None,
     card_type: str | None = None,
+    mode: str | None = None,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     db: Session = Depends(get_db),
@@ -25,7 +27,9 @@ def get_feed(
     page = get_feed_page(
         db,
         subject_slug=subject_slug,
+        topic_slug=topic_slug,
         card_type=card_type,
+        mode=mode,
         offset=offset,
         limit=limit,
     )
