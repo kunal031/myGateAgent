@@ -35,6 +35,10 @@ backend/data/transcripts/
 # Runtime state (quota counters, job progress)
 backend/data/.ratelimit_*.json
 
+# Derived retrieval indexes — rebuildable from source_chunks via
+# POST /api/agent/index/build
+backend/data/vectors/
+
 # ---- OS / editor ----
 .DS_Store
 *.swp

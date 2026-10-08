@@ -14,8 +14,13 @@ SQLAlchemy==2.1.3
 # ---- AI (Gemini: vision OCR, generation, assistant, Search grounding) ----
 google-genai==2.29.0
 
-# ---- Vector store / retrieval ----
-chromadb==1.5.9
+# ---- Retrieval ----
+# No vector database: ~1,800 chunks search in ~0.1 ms with a plain matrix
+# multiply, so vectors live in a .npy file and keyword search uses SQLite
+# FTS5. Dropping chromadb also drops onnxruntime and a 166 MB local
+# embedding model -- 246 MB of disk and ~316 MB RSS for no benefit at this
+# scale.
+numpy==2.4.6
 
 # ---- Document extraction ----
 pymupdf==1.28.2                 # PDF text + page rasterisation
