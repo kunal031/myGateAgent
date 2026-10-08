@@ -40,7 +40,7 @@ export default function MathText({ text, className = "" }: MathTextProps) {
     processed = processed
       .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
       .replace(/\*(.*?)\*/g, "<em>$1</em>")
-      .replace(/`([^`]+)`/g, '<code class="px-1.5 py-0.5 rounded bg-slate-800 text-amber-300 font-mono text-xs">$1</code>')
+      .replace(/`([^`]+)`/g, '<code class="px-1.5 py-0.5 rounded bg-[var(--surface-sunk)] text-amber-300 font-mono text-xs">$1</code>')
       .replace(/\n\n/g, '<div class="h-2"></div>')
       .replace(/\n/g, "<br/>");
 

@@ -179,16 +179,16 @@ function QuizDrill() {
   return (
     <div className="max-w-4xl mx-auto space-y-4">
       {/* Header Bar */}
-      <div className="flex items-center justify-between gap-3 pb-2 border-b border-slate-800/80">
+      <div className="flex items-center justify-between gap-3 pb-2 border-b border-[var(--line)]">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-violet-600/20 border border-violet-500/30 flex items-center justify-center text-cyan-400">
+          <div className="w-8 h-8 rounded-lg bg-[var(--accent)] border border-[var(--line)] flex items-center justify-center text-[var(--ink)]">
             <Zap className="w-4 h-4 fill-cyan-400" />
           </div>
           <div>
-            <h1 className="text-xl font-black tracking-tight text-white flex items-center gap-2">
+            <h1 className="text-xl font-black tracking-tight text-[var(--ink)] flex items-center gap-2">
               Quiz Drill
               {questions.length > 0 && (
-                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-violet-500/20 text-cyan-300 border border-violet-500/30">
+                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-[var(--accent)] text-[var(--ink)] border border-[var(--line)]">
                   {currentIndex + 1} / {questions.length}
                 </span>
               )}
@@ -197,7 +197,7 @@ function QuizDrill() {
         </div>
 
         {questions.length > 0 && (
-          <div className="flex items-center gap-2 bg-[#0d1322] px-3 py-1.5 rounded-xl border border-slate-800">
+          <div className="flex items-center gap-2 bg-[var(--surface)] px-3 py-1.5 rounded-xl border border-[var(--line)]">
             <Timer className="w-4 h-4 text-amber-400" />
             <span className="font-mono text-xs font-bold text-amber-300">
               {formatTimer(timeSpent)}
@@ -207,8 +207,8 @@ function QuizDrill() {
       </div>
 
       {/* Filter Row */}
-      <div className="p-2.5 rounded-xl bg-[#0d1322]/80 border border-slate-800/90 flex flex-wrap items-center gap-2.5">
-        <Filter className="w-3.5 h-3.5 text-cyan-400 ml-1 shrink-0" />
+      <div className="p-2.5 rounded-xl bg-[var(--surface)] border border-[var(--line)] flex flex-wrap items-center gap-2.5">
+        <Filter className="w-3.5 h-3.5 text-[var(--ink)] ml-1 shrink-0" />
 
         <select
           value={selectedSubject}
@@ -217,7 +217,7 @@ function QuizDrill() {
             setSelectedSubject(e.target.value);
             setSelectedTopic("all");
           }}
-          className="bg-[#090d16] border border-slate-700/80 text-slate-200 text-xs font-medium rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-violet-500"
+          className="bg-[var(--surface-sunk)] border border-[var(--line)] text-[var(--ink)] text-xs font-medium rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-violet-500"
         >
           <option value="all">All Subjects (12)</option>
           {subjects.map((sub) => (
@@ -234,7 +234,7 @@ function QuizDrill() {
               setLoading(true);
               setSelectedTopic(e.target.value);
             }}
-            className="bg-[#090d16] border border-slate-700/80 text-slate-200 text-xs font-medium rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-violet-500"
+            className="bg-[var(--surface-sunk)] border border-[var(--line)] text-[var(--ink)] text-xs font-medium rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-violet-500"
           >
             <option value="all">All Topics</option>
             {subjects
@@ -253,7 +253,7 @@ function QuizDrill() {
             setLoading(true);
             setSelectedType(e.target.value);
           }}
-          className="bg-[#090d16] border border-slate-700/80 text-slate-200 text-xs font-medium rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-violet-500"
+          className="bg-[var(--surface-sunk)] border border-[var(--line)] text-[var(--ink)] text-xs font-medium rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-violet-500"
         >
           <option value="all">All Types</option>
           <option value="MCQ">MCQ</option>
@@ -267,7 +267,7 @@ function QuizDrill() {
             setLoading(true);
             setSelectedDifficulty(e.target.value);
           }}
-          className="bg-[#090d16] border border-slate-700/80 text-slate-200 text-xs font-medium rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-violet-500"
+          className="bg-[var(--surface-sunk)] border border-[var(--line)] text-[var(--ink)] text-xs font-medium rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-violet-500"
         >
           <option value="all">All Difficulties</option>
           <option value="Foundational">Foundational</option>
@@ -278,17 +278,17 @@ function QuizDrill() {
 
       {/* Question Card */}
       {loading ? (
-        <div className="text-center py-20 text-slate-500 text-xs font-mono">
+        <div className="text-center py-20 text-[var(--ink-faint)] text-xs font-mono">
           Loading questions...
         </div>
       ) : questions.length === 0 ? (
-        <div className="text-center py-16 bg-[#0d1322]/40 rounded-xl border border-slate-800 text-slate-400 text-xs font-medium">
+        <div className="text-center py-16 bg-[var(--surface-muted)] rounded-xl border border-[var(--line)] text-[var(--ink-faint)] text-xs font-medium">
           No questions found for this filter.
         </div>
       ) : (
-        <div className="p-5 rounded-xl bg-[#0d1322]/85 border border-slate-800 space-y-4 shadow-lg shadow-black/40">
+        <div className="p-5 rounded-xl bg-[var(--surface)] border border-[var(--line)] space-y-4 shadow-lg shadow-black/40">
           {/* Question Tag Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800">
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[var(--line)]">
             <div className="flex items-center gap-2">
               <span
                 className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider border ${
@@ -302,23 +302,23 @@ function QuizDrill() {
                 {currentQ.question_type}
               </span>
 
-              <span className="text-xs font-bold text-slate-200 bg-[#090d16] px-2 py-0.5 rounded border border-slate-800">
+              <span className="text-xs font-bold text-[var(--ink)] bg-[var(--surface-sunk)] px-2 py-0.5 rounded border border-[var(--line)]">
                 +{currentQ.marks}M
                 {currentQ.question_type === "MCQ" && (
                   <span className="text-rose-400 ml-1">(-{currentQ.negative_marks})</span>
                 )}
                 {currentQ.question_type !== "MCQ" && (
-                  <span className="text-slate-400 ml-1">(0 -ve)</span>
+                  <span className="text-[var(--ink-faint)] ml-1">(0 -ve)</span>
                 )}
               </span>
 
-              <span className="text-xs font-semibold text-slate-300">
-                {currentQ.subject_name} · <span className="text-slate-400">{currentQ.topic_name}</span>
+              <span className="text-xs font-semibold text-[var(--ink-soft)]">
+                {currentQ.subject_name} · <span className="text-[var(--ink-faint)]">{currentQ.topic_name}</span>
               </span>
             </div>
 
             <div className="flex items-center gap-1.5">
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800/80 text-slate-400 border border-slate-700/60">
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[var(--surface-sunk)] text-[var(--ink-faint)] border border-[var(--line)]">
                 {currentQ.difficulty}
               </span>
               {currentQ.is_pyq && (
@@ -330,7 +330,7 @@ function QuizDrill() {
           </div>
 
           {/* Question Content */}
-          <div className="text-slate-100 text-sm md:text-[15px] leading-relaxed bg-[#070a13]/90 p-4 rounded-xl border border-slate-800/90">
+          <div className="text-[var(--ink)] text-sm md:text-[15px] leading-relaxed bg-[var(--surface-sunk)] p-4 rounded-xl border border-[var(--line)]">
             <MathText text={currentQ.content} />
           </div>
 
@@ -344,8 +344,8 @@ function QuizDrill() {
 
           {/* Options Interface */}
           {currentQ.question_type === "NAT" ? (
-            <div className="p-4 rounded-xl bg-[#070a13]/70 border border-slate-800 flex items-center gap-3">
-              <span className="text-xs font-mono font-bold text-slate-400 uppercase">Answer:</span>
+            <div className="p-4 rounded-xl bg-[var(--surface-sunk)] border border-[var(--line)] flex items-center gap-3">
+              <span className="text-xs font-mono font-bold text-[var(--ink-faint)] uppercase">Answer:</span>
               <input
                 type="number"
                 step="any"
@@ -353,7 +353,7 @@ function QuizDrill() {
                 value={natAnswer}
                 onChange={(e) => setNatAnswer(e.target.value)}
                 placeholder="Enter value"
-                className="bg-[#090d16] border border-slate-700 text-slate-100 font-mono text-base px-3.5 py-2 rounded-lg w-48 focus:outline-none focus:border-cyan-400 disabled:opacity-60"
+                className="bg-[var(--surface-sunk)] border border-[var(--line)] text-[var(--ink)] font-mono text-base px-3.5 py-2 rounded-lg w-48 focus:outline-none focus:border-cyan-400 disabled:opacity-60"
               />
             </div>
           ) : (
@@ -367,15 +367,15 @@ function QuizDrill() {
                     onClick={() => handleOptionToggle(opt.id)}
                     className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all duration-150 ${
                       isSelected
-                        ? "bg-violet-600/20 border-cyan-400/80 text-white shadow-md shadow-violet-600/10 ring-1 ring-cyan-400/50"
-                        : "bg-[#070a13]/70 border-slate-800 text-slate-300 hover:border-slate-700 hover:bg-[#090d16]"
+                        ? "bg-[var(--accent)] border-cyan-400/80 text-[var(--ink)] shadow-md shadow-violet-600/10 ring-1 ring-cyan-400/50"
+                        : "bg-[var(--surface-sunk)] border-[var(--line)] text-[var(--ink-soft)] hover:border-[var(--line)] hover:bg-[var(--surface-sunk)]"
                     } ${result !== null ? "pointer-events-none opacity-85" : ""}`}
                   >
                     <div
                       className={`w-5 h-5 rounded flex items-center justify-center shrink-0 mt-0.5 text-xs font-bold font-mono transition ${
                         isSelected
                           ? "bg-cyan-400 text-black font-extrabold shadow-sm shadow-cyan-400/50"
-                          : "border border-slate-600 text-slate-400"
+                          : "border border-[var(--line)] text-[var(--ink-faint)]"
                       } ${currentQ.question_type === "MCQ" ? "rounded-full" : "rounded"}`}
                     >
                       {opt.id}
@@ -396,14 +396,14 @@ function QuizDrill() {
               <button
                 onClick={handleSubmit}
                 disabled={submitting}
-                className="px-5 py-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-xs font-bold transition shadow-md shadow-violet-600/25 disabled:opacity-50"
+                className="px-5 py-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-[var(--ink)] text-xs font-bold transition shadow-md shadow-violet-600/25 disabled:opacity-50"
               >
                 {submitting ? "Checking..." : "Submit Answer"}
               </button>
             </div>
           ) : (
             /* Result Banner */
-            <div className="space-y-3 pt-3 border-t border-slate-800">
+            <div className="space-y-3 pt-3 border-t border-[var(--line)]">
               <div
                 className={`p-3.5 rounded-xl flex items-center justify-between gap-3 border ${
                   result.is_correct
@@ -421,19 +421,19 @@ function QuizDrill() {
                     <span className="font-bold">
                       {result.is_correct ? "Correct" : "Incorrect"}
                     </span>
-                    <span className="mx-2 text-slate-500">|</span>
+                    <span className="mx-2 text-[var(--ink-faint)]">|</span>
                     <span className="font-mono font-bold">
                       {result.marks_awarded > 0 ? `+${result.marks_awarded}` : result.marks_awarded}M
                     </span>
-                    <span className="mx-2 text-slate-500">|</span>
-                    <span>Key: <strong className="font-mono text-cyan-300">{result.correct_answer}</strong></span>
+                    <span className="mx-2 text-[var(--ink-faint)]">|</span>
+                    <span>Key: <strong className="font-mono text-[var(--ink)]">{result.correct_answer}</strong></span>
                   </div>
                 </div>
 
                 {currentIndex < questions.length - 1 && (
                   <button
                     onClick={handleNext}
-                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold transition"
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-[var(--ink)] text-xs font-bold transition"
                   >
                     Next
                     <ArrowRight className="w-3.5 h-3.5" />
@@ -442,12 +442,12 @@ function QuizDrill() {
               </div>
 
               {/* Step-by-Step KaTeX Explanation */}
-              <div className="p-4 rounded-xl bg-[#070a13] border border-slate-800/90 space-y-1.5">
-                <div className="flex items-center gap-1.5 text-[11px] font-mono font-bold text-cyan-400 uppercase">
+              <div className="p-4 rounded-xl bg-[var(--surface-sunk)] border border-[var(--line)] space-y-1.5">
+                <div className="flex items-center gap-1.5 text-[11px] font-mono font-bold text-[var(--ink)] uppercase">
                   <BookOpen className="w-3.5 h-3.5" />
                   <span>Explanation:</span>
                 </div>
-                <div className="text-xs sm:text-[13px] text-slate-200 pt-1">
+                <div className="text-xs sm:text-[13px] text-[var(--ink)] pt-1">
                   <MathText text={result.explanation} />
                 </div>
               </div>
@@ -463,7 +463,7 @@ export default function QuizPage() {
   return (
     <Suspense
       fallback={
-        <div className="text-center py-20 text-slate-500 text-xs font-mono">
+        <div className="text-center py-20 text-[var(--ink-faint)] text-xs font-mono">
           Loading drill...
         </div>
       }

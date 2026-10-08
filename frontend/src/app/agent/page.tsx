@@ -91,13 +91,13 @@ export default function AgentPage() {
   return (
     <div className="max-w-4xl mx-auto h-[calc(100vh-4rem)] flex flex-col space-y-3">
       {/* Header */}
-      <div className="flex items-center justify-between pb-2 border-b border-slate-800/80 shrink-0">
+      <div className="flex items-center justify-between pb-2 border-b border-[var(--line)] shrink-0">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-violet-600/20 border border-violet-500/30 flex items-center justify-center text-cyan-400">
+          <div className="w-8 h-8 rounded-lg bg-[var(--accent)] border border-[var(--line)] flex items-center justify-center text-[var(--ink)]">
             <Bot className="w-4 h-4" />
           </div>
           <div>
-            <h1 className="text-xl font-black tracking-tight text-white flex items-center gap-2">
+            <h1 className="text-xl font-black tracking-tight text-[var(--ink)] flex items-center gap-2">
               AI Agent & RAG
               <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                 Live RAG
@@ -106,8 +106,8 @@ export default function AgentPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 text-xs text-slate-400 font-mono">
-          <FolderSync className="w-3.5 h-3.5 text-cyan-400" />
+        <div className="flex items-center gap-2 text-xs text-[var(--ink-faint)] font-mono">
+          <FolderSync className="w-3.5 h-3.5 text-[var(--ink)]" />
           <span>
             {docStats ? `${docStats.total_documents} Synced Files` : "Syncing Drive Notes"}
           </span>
@@ -120,16 +120,16 @@ export default function AgentPage() {
           <button
             key={idx}
             onClick={() => handleSend(p)}
-            className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-[#0d1322] hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition flex items-center gap-1.5"
+            className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-[var(--surface)] hover:bg-[var(--surface-sunk)] border border-[var(--line)] text-[var(--ink-soft)] hover:text-[var(--ink)] transition flex items-center gap-1.5"
           >
-            <Sparkles className="w-3 h-3 text-cyan-400 shrink-0" />
+            <Sparkles className="w-3 h-3 text-[var(--ink)] shrink-0" />
             <span className="truncate max-w-xs">{p}</span>
           </button>
         ))}
       </div>
 
       {/* Messages */}
-      <div className="flex-1 bg-[#0d1322]/80 rounded-xl border border-slate-800/90 p-4 overflow-y-auto space-y-3">
+      <div className="flex-1 bg-[var(--surface)] rounded-xl border border-[var(--line)] p-4 overflow-y-auto space-y-3">
         {messages.map((m, idx) => (
           <div
             key={idx}
@@ -140,15 +140,15 @@ export default function AgentPage() {
             <div
               className={`max-w-2xl p-3.5 rounded-xl text-xs sm:text-[13px] leading-relaxed ${
                 m.role === "user"
-                  ? "bg-gradient-to-r from-violet-600 to-indigo-600 text-white rounded-br-none shadow-md"
-                  : "bg-[#070a13] border border-slate-800 text-slate-200 rounded-bl-none shadow-sm"
+                  ? "bg-gradient-to-r from-violet-600 to-indigo-600 text-[var(--ink)] rounded-br-none shadow-md"
+                  : "bg-[var(--surface-sunk)] border border-[var(--line)] text-[var(--ink)] rounded-bl-none shadow-sm"
               }`}
             >
               <MathText text={m.content} />
 
               {m.source && (
-                <div className="mt-2.5 pt-1.5 border-t border-slate-800/80 flex items-center gap-1.5 text-[10px] text-slate-400 font-mono">
-                  <BookOpen className="w-3 h-3 text-cyan-400" />
+                <div className="mt-2.5 pt-1.5 border-t border-[var(--line)] flex items-center gap-1.5 text-[10px] text-[var(--ink-faint)] font-mono">
+                  <BookOpen className="w-3 h-3 text-[var(--ink)]" />
                   <span>{m.source}</span>
                 </div>
               )}
@@ -157,15 +157,15 @@ export default function AgentPage() {
         ))}
 
         {isThinking && (
-          <div className="flex items-center gap-2 text-xs text-cyan-400 font-medium py-1">
-            <Zap className="w-3.5 h-3.5 animate-pulse text-cyan-400" />
+          <div className="flex items-center gap-2 text-xs text-[var(--ink)] font-medium py-1">
+            <Zap className="w-3.5 h-3.5 animate-pulse text-[var(--ink)]" />
             <span>Consulting your notes & RAG vector store...</span>
           </div>
         )}
       </div>
 
       {/* Input */}
-      <div className="shrink-0 p-2 rounded-xl bg-[#0d1322] border border-slate-800 flex items-center gap-2">
+      <div className="shrink-0 p-2 rounded-xl bg-[var(--surface)] border border-[var(--line)] flex items-center gap-2">
         <input
           type="text"
           value={input}
@@ -177,13 +177,13 @@ export default function AgentPage() {
             }
           }}
           placeholder="Ask a question from your notes or request custom GATE traps..."
-          className="flex-1 bg-transparent px-3 py-1.5 text-xs sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none"
+          className="flex-1 bg-transparent px-3 py-1.5 text-xs sm:text-sm text-[var(--ink)] placeholder-[var(--ink-faint)] focus:outline-none"
         />
 
         <button
           onClick={() => handleSend()}
           disabled={!input.trim() || isThinking}
-          className="p-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white transition disabled:opacity-40"
+          className="p-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-[var(--ink)] transition disabled:opacity-40"
         >
           <Send className="w-4 h-4" />
         </button>
