@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 from .database import engine, SessionLocal, Base
 from ..models.models import Subject, Topic, Question, FeedCard
+from ..models.sources import Source, SourceChunk  # noqa: F401  (register tables)
 from ..data.syllabus import SYLLABUS_DATA
 from ..data.seeds import SEED_FEED_CARDS, SEED_QUESTIONS
 

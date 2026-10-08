@@ -22,7 +22,10 @@ out/
 *.tsbuildinfo
 next-env.d.ts
 
-# ---- Large ingested sources (683 MB; kept local, not in git) ----
+# ---- Large source material (1.1 GB+; kept local, not in git) ----
+# Books, PYQ papers and notes you supply. Regenerable from their origins:
+# see docs/SOURCES.md for where each set came from.
+books/
 backend/data/documents/
 backend/data/inbox/
 backend/data/chroma_db/
