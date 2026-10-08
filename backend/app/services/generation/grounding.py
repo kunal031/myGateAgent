@@ -97,13 +97,54 @@ def _escape_latex_backslashes(text: str) -> str:
     return _LONE_BACKSLASH.sub(r"\\\\", text)
 
 
+def _escape_control_chars_in_strings(text: str) -> str:
+    """Escape raw newlines and tabs that appear inside JSON string values.
+
+    Card content is multi-line markdown, and the model often emits those
+    line breaks literally. JSON forbids unescaped control characters inside
+    a string, so the whole reply fails to parse and the batch is lost.
+
+    Tracks whether the scanner is inside a string so that the newlines
+    formatting the JSON itself are left alone.
+    """
+    out: list[str] = []
+    in_string = False
+    escaped = False
+
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            elif char == "\n":
+                out.append("\\n")
+                continue
+            elif char == "\r":
+                out.append("\\r")
+                continue
+            elif char == "\t":
+                out.append("\\t")
+                continue
+        elif char == '"':
+            in_string = True
+        out.append(char)
+
+    return "".join(out)
+
+
 def parse_json_response(raw: str) -> dict:
-    """Parse a model JSON reply, tolerating code fences, prose and LaTeX."""
+    """Parse a model JSON reply, tolerating code fences, prose, LaTeX and
+    unescaped line breaks inside card content."""
     text = raw.strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.S)
 
-    for candidate in (text, _escape_latex_backslashes(text)):
+    repaired = _escape_control_chars_in_strings(_escape_latex_backslashes(text))
+
+    for candidate in (text, _escape_latex_backslashes(text), repaired):
         try:
             return json.loads(candidate)
         except json.JSONDecodeError:
@@ -114,10 +155,16 @@ def parse_json_response(raw: str) -> dict:
         raise json.JSONDecodeError("No JSON object in reply", text, 0)
 
     block = match.group(0)
-    try:
-        return json.loads(block)
-    except json.JSONDecodeError:
-        return json.loads(_escape_latex_backslashes(block))
+    for candidate in (
+        block,
+        _escape_latex_backslashes(block),
+        _escape_control_chars_in_strings(_escape_latex_backslashes(block)),
+    ):
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+    raise json.JSONDecodeError("Could not repair JSON reply", text, 0)
 
 
 def is_supported(claim: str, context: str, *, min_overlap: float = 0.45) -> bool:
