@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { Suspense, useEffect, useState, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import { 
   CheckCircle2, 
   XCircle, 
@@ -21,16 +22,28 @@ import {
   SubmitResponse 
 } from "@/lib/api";
 
-export default function QuizPage() {
+function QuizDrill() {
+  const searchParams = useSearchParams();
+
+  // Inbound deep links: /quiz?subject=...&topic=...&limit=...
+  // Sent by the feed "Drill Topic" link, the analytics "Start" link, and the
+  // test page "Launch Test" button.
+  const urlSubject = searchParams.get("subject") || "all";
+  const urlTopic = searchParams.get("topic") || "all";
+  const urlType = searchParams.get("type") || "all";
+  const urlDifficulty = searchParams.get("difficulty") || "all";
+  const urlLimit = Number(searchParams.get("limit")) || 20;
+
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
   const [subjects, setSubjects] = useState<SubjectItem[]>([]);
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(true);
 
-  // Filters
-  const [selectedSubject, setSelectedSubject] = useState<string>("all");
-  const [selectedType, setSelectedType] = useState<string>("all");
-  const [selectedDifficulty, setSelectedDifficulty] = useState<string>("all");
+  // Filters — seeded from the URL so deep links land pre-filtered
+  const [selectedSubject, setSelectedSubject] = useState<string>(urlSubject);
+  const [selectedTopic, setSelectedTopic] = useState<string>(urlTopic);
+  const [selectedType, setSelectedType] = useState<string>(urlType);
+  const [selectedDifficulty, setSelectedDifficulty] = useState<string>(urlDifficulty);
 
   // Interaction State
   const [selectedOptions, setSelectedOptions] = useState<string[]>([]);
@@ -54,9 +67,10 @@ export default function QuizPage() {
       const [qData, sData] = await Promise.all([
         fetchQuiz({
           subject_slug: selectedSubject,
+          topic_slug: selectedTopic,
           question_type: selectedType,
           difficulty: selectedDifficulty,
-          limit: 20,
+          limit: urlLimit,
         }),
         fetchSyllabus(),
       ]);
@@ -71,7 +85,7 @@ export default function QuizPage() {
 
   useEffect(() => {
     loadData();
-  }, [selectedSubject, selectedType, selectedDifficulty]);
+  }, [selectedSubject, selectedTopic, selectedType, selectedDifficulty, urlLimit]);
 
   useEffect(() => {
     if (result !== null || loading || questions.length === 0) {
@@ -191,7 +205,10 @@ export default function QuizPage() {
 
         <select
           value={selectedSubject}
-          onChange={(e) => setSelectedSubject(e.target.value)}
+          onChange={(e) => {
+            setSelectedSubject(e.target.value);
+            setSelectedTopic("all");
+          }}
           className="bg-[#090d16] border border-slate-700/80 text-slate-200 text-xs font-medium rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-violet-500"
         >
           <option value="all">All Subjects (12)</option>
@@ -201,6 +218,23 @@ export default function QuizPage() {
             </option>
           ))}
         </select>
+
+        {selectedSubject !== "all" && (
+          <select
+            value={selectedTopic}
+            onChange={(e) => setSelectedTopic(e.target.value)}
+            className="bg-[#090d16] border border-slate-700/80 text-slate-200 text-xs font-medium rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-violet-500"
+          >
+            <option value="all">All Topics</option>
+            {subjects
+              .find((s) => s.slug === selectedSubject)
+              ?.topics.map((t) => (
+                <option key={t.slug} value={t.slug}>
+                  {t.name}
+                </option>
+              ))}
+          </select>
+        )}
 
         <select
           value={selectedType}
@@ -405,5 +439,19 @@ export default function QuizPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function QuizPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="text-center py-20 text-slate-500 text-xs font-mono">
+          Loading drill...
+        </div>
+      }
+    >
+      <QuizDrill />
+    </Suspense>
   );
 }
