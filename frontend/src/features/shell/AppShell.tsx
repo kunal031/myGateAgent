@@ -26,7 +26,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* pb-24 clears the mobile tab bar; md:pl-64 clears the sidebar. */}
       <main className="md:pl-64 min-w-0">
-        <div className="mx-auto w-full min-w-0 max-w-5xl px-4 pb-24 pt-4 md:px-8 md:pb-10 md:pt-8">
+        {/* max-w-[1700px] rather than max-w-5xl: on a wide monitor the old
+            1024px cap left several hundred pixels blank on each side and
+            forced the card type down to stay readable. */}
+        <div className="mx-auto w-full min-w-0 max-w-[1700px] px-4 pb-24 pt-4 md:px-6 md:pb-10 md:pt-6">
           {children}
         </div>
       </main>

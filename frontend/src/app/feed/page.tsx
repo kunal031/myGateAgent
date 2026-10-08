@@ -146,7 +146,7 @@ export default function FeedPage() {
       ) : (
         /* CSS columns pack cards by height with no row gaps, which is what
            makes the layout read as a masonry wall rather than a grid. */
-        <div className="columns-1 gap-3 sm:columns-2 lg:columns-3">
+        <div className="columns-1 gap-4 sm:columns-2 lg:columns-3 2xl:columns-4">
           {cards.map((card) => (
             <FeedCard
               key={card.id}
