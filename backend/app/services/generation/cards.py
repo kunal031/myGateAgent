@@ -102,7 +102,7 @@ def generate_cards_for_concept(
         if mode == StudyMode.BASIC and card_type not in BASIC_TYPES:
             card_type = "CONCEPT"
 
-        db.add(FeedCard(
+        card = FeedCard(
             subject_id=concept.subject_id,
             topic_id=concept.topic_id,
             concept_id=concept.id,
@@ -117,8 +117,9 @@ def generate_cards_for_concept(
             provenance=context.provenance[:2000],
             source_chunk_ids=",".join(str(c) for c in context.chunk_ids)[:200],
             review_status="pending",
-        ))
-        created.append(db.query(FeedCard).order_by(FeedCard.id.desc()).first())
+        )
+        db.add(card)
+        created.append(card)
 
     db.commit()
     logger.info(
