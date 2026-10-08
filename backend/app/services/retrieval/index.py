@@ -15,6 +15,10 @@ from .vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
+# Persist progress every this many chunks, so an interrupted run resumes
+# instead of starting over.
+SAVE_EVERY = 96
+
 
 def index_pending_chunks(db: Session, *, batch_limit: int | None = None) -> dict:
     """Embed and index any chunk not yet in the vector store.
@@ -37,19 +41,25 @@ def index_pending_chunks(db: Session, *, batch_limit: int | None = None) -> dict
     embedded = 0
     if chunks:
         logger.info("Embedding %d chunks...", len(chunks))
-        vectors = embed_texts([c.content for c in chunks])
-        # Carry the tags so search can scope without a DB round trip.
-        store.add(
-            [c.id for c in chunks],
-            vectors,
-            subject_ids=[c.subject_id for c in chunks],
-            topic_ids=[c.topic_id for c in chunks],
-        )
-        store.save()
-        for chunk in chunks:
-            chunk.is_embedded = True
-        db.commit()
-        embedded = len(chunks)
+        # Save in slices rather than once at the end. A full pass over a
+        # large corpus is tens of API calls over several minutes; saving
+        # only at the end means an interruption loses all of it and the
+        # work is paid for again on the next run.
+        for start in range(0, len(chunks), SAVE_EVERY):
+            batch = chunks[start:start + SAVE_EVERY]
+            vectors = embed_texts([c.content for c in batch])
+            store.add(
+                [c.id for c in batch],
+                vectors,
+                subject_ids=[c.subject_id for c in batch],
+                topic_ids=[c.topic_id for c in batch],
+            )
+            store.save()
+            for chunk in batch:
+                chunk.is_embedded = True
+            db.commit()
+            embedded += len(batch)
+            logger.info("  embedded %d/%d", embedded, len(chunks))
 
     fts_rows = keyword.rebuild(db)
 
