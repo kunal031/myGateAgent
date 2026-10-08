@@ -80,20 +80,44 @@ def build_context(matches: list[Match], *, min_chars: int = 400) -> GroundedCont
 
 _JSON_BLOCK = re.compile(r"\{.*\}", re.S)
 
+# Backslash sequences JSON actually defines. Anything else -- \log, \Theta,
+# \frac and the rest of LaTeX -- is an invalid escape that makes the whole
+# reply unparseable, losing every card in the batch.
+_VALID_JSON_ESCAPE = re.compile(r'\\(["\\\\/bfnrtu])')
+_LONE_BACKSLASH = re.compile(r'\\(?!["\\\\/bfnrtu])')
+
+
+def _escape_latex_backslashes(text: str) -> str:
+    """Double any backslash that is not a valid JSON escape.
+
+    Cards are full of LaTeX, so the model routinely emits `$O(n \log n)$`
+    inside a JSON string. That is invalid JSON. Doubling the lone
+    backslashes makes it parseable and leaves the LaTeX intact once decoded.
+    """
+    return _LONE_BACKSLASH.sub(r"\\\\", text)
+
 
 def parse_json_response(raw: str) -> dict:
-    """Parse a model JSON reply, tolerating code fences and stray prose."""
+    """Parse a model JSON reply, tolerating code fences, prose and LaTeX."""
     text = raw.strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.S)
 
+    for candidate in (text, _escape_latex_backslashes(text)):
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+
+    match = _JSON_BLOCK.search(text)
+    if not match:
+        raise json.JSONDecodeError("No JSON object in reply", text, 0)
+
+    block = match.group(0)
     try:
-        return json.loads(text)
+        return json.loads(block)
     except json.JSONDecodeError:
-        match = _JSON_BLOCK.search(text)
-        if not match:
-            raise
-        return json.loads(match.group(0))
+        return json.loads(_escape_latex_backslashes(block))
 
 
 def is_supported(claim: str, context: str, *, min_overlap: float = 0.45) -> bool:
