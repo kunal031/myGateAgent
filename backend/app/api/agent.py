@@ -30,17 +30,17 @@ def chat_with_agent(payload: ChatRequest):
         source_cite = f"Notes: {primary_match['file_name']} (Page {primary_match['page_number']})"
         
         reply = (
-            f"### Grounded Response from Your Notes\\n\\n"
-            f"**Excerpt from `{primary_match['file_name']}` (Page {primary_match['page_number']}):**\\n\\n"
-            f"> {primary_match['content'][:400]}...\\n\\n"
-            f"**Synthesis & GATE Exam Traps:**\\n"
+            f"### Grounded Response from Your Notes\n\n"
+            f"**Excerpt from `{primary_match['file_name']}` (Page {primary_match['page_number']}):**\n\n"
+            f"> {primary_match['content'][:400]}...\n\n"
+            f"**Synthesis & GATE Exam Traps:**\n"
             f"Make sure to apply the standard derivation rules and check edge cases (such as boundary conditions or empty sets) as highlighted in your notes."
         )
     else:
         # Fallback to standard core knowledge
         source_cite = "Core GATE CSE Standard References"
         reply = (
-            f"### Conceptual Analysis: {query}\\n\\n"
+            f"### Conceptual Analysis: {query}\n\n"
             f"Relevant concepts have been verified against the standard GATE syllabus. "
             f"If you have specific handwritten notes on this topic, ensure they are synced in `backend/data/documents/`."
         )
