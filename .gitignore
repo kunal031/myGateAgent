@@ -14,6 +14,9 @@ __pycache__/
 *.db
 *.sqlite
 *.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
 
 # ---- Node / Next.js ----
 node_modules/
