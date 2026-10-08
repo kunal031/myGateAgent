@@ -5,6 +5,7 @@ quoted support cannot be found in the retrieved context is dropped rather
 than saved, so an unsupported claim never reaches the feed.
 """
 
+import json
 import logging
 
 from sqlalchemy.orm import Session
@@ -79,7 +80,14 @@ def generate_cards_for_concept(
         temperature=0.4,
     )
 
-    payload = parse_json_response(raw)
+    try:
+        payload = parse_json_response(raw)
+    except json.JSONDecodeError:
+        # An unparseable reply costs this concept's cards, not the whole
+        # topic run. The raw reply is logged in parse_json_response.
+        logger.warning("Unparseable reply for concept %s; skipping", concept.name)
+        return []
+
     created: list[FeedCard] = []
     rejected = 0
 

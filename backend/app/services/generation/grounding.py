@@ -152,6 +152,10 @@ def parse_json_response(raw: str) -> dict:
 
     match = _JSON_BLOCK.search(text)
     if not match:
+        # No JSON at all: usually a refusal or a safety block. Log the head
+        # of the reply, otherwise this is undiagnosable after the fact.
+        logger.error("Reply contained no JSON object. First 300 chars: %r",
+                     text[:300])
         raise json.JSONDecodeError("No JSON object in reply", text, 0)
 
     block = match.group(0)
@@ -164,6 +168,7 @@ def parse_json_response(raw: str) -> dict:
             return json.loads(candidate)
         except json.JSONDecodeError:
             continue
+    logger.error("Could not repair JSON reply. First 300 chars: %r", text[:300])
     raise json.JSONDecodeError("Could not repair JSON reply", text, 0)
 
 
