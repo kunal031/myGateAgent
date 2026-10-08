@@ -55,36 +55,43 @@ function QuizDrill() {
   const [timeSpent, setTimeSpent] = useState<number>(0);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const loadData = async () => {
-    setLoading(true);
-    setResult(null);
-    setSelectedOptions([]);
-    setNatAnswer("");
-    setCurrentIndex(0);
-    setTimeSpent(0);
-
-    try {
-      const [qData, sData] = await Promise.all([
-        fetchQuiz({
-          subject_slug: selectedSubject,
-          topic_slug: selectedTopic,
-          question_type: selectedType,
-          difficulty: selectedDifficulty,
-          limit: urlLimit,
-        }),
-        fetchSyllabus(),
-      ]);
-      setQuestions(qData);
-      setSubjects(sData);
-    } catch (err) {
-      console.error("Failed to load quiz questions", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // Reload whenever filters change. The effect owns the async flow so no
+  // setState happens synchronously in the effect body, and `cancelled`
+  // prevents a slow response for old filters from overwriting newer results.
   useEffect(() => {
-    loadData();
+    let cancelled = false;
+
+    async function load() {
+      try {
+        const [qData, sData] = await Promise.all([
+          fetchQuiz({
+            subject_slug: selectedSubject,
+            topic_slug: selectedTopic,
+            question_type: selectedType,
+            difficulty: selectedDifficulty,
+            limit: urlLimit,
+          }),
+          fetchSyllabus(),
+        ]);
+        if (cancelled) return;
+        setQuestions(qData);
+        setSubjects(sData);
+        setResult(null);
+        setSelectedOptions([]);
+        setNatAnswer("");
+        setCurrentIndex(0);
+        setTimeSpent(0);
+      } catch (err) {
+        if (!cancelled) console.error("Failed to load quiz questions", err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
   }, [selectedSubject, selectedTopic, selectedType, selectedDifficulty, urlLimit]);
 
   useEffect(() => {
@@ -206,6 +213,7 @@ function QuizDrill() {
         <select
           value={selectedSubject}
           onChange={(e) => {
+            setLoading(true);
             setSelectedSubject(e.target.value);
             setSelectedTopic("all");
           }}
@@ -222,7 +230,10 @@ function QuizDrill() {
         {selectedSubject !== "all" && (
           <select
             value={selectedTopic}
-            onChange={(e) => setSelectedTopic(e.target.value)}
+            onChange={(e) => {
+              setLoading(true);
+              setSelectedTopic(e.target.value);
+            }}
             className="bg-[#090d16] border border-slate-700/80 text-slate-200 text-xs font-medium rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-violet-500"
           >
             <option value="all">All Topics</option>
@@ -238,7 +249,10 @@ function QuizDrill() {
 
         <select
           value={selectedType}
-          onChange={(e) => setSelectedType(e.target.value)}
+          onChange={(e) => {
+            setLoading(true);
+            setSelectedType(e.target.value);
+          }}
           className="bg-[#090d16] border border-slate-700/80 text-slate-200 text-xs font-medium rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-violet-500"
         >
           <option value="all">All Types</option>
@@ -249,7 +263,10 @@ function QuizDrill() {
 
         <select
           value={selectedDifficulty}
-          onChange={(e) => setSelectedDifficulty(e.target.value)}
+          onChange={(e) => {
+            setLoading(true);
+            setSelectedDifficulty(e.target.value);
+          }}
           className="bg-[#090d16] border border-slate-700/80 text-slate-200 text-xs font-medium rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-violet-500"
         >
           <option value="all">All Difficulties</option>

@@ -7,8 +7,7 @@ import {
   Settings2, 
   Play, 
   Layers, 
-  Timer,
-  Zap
+  Timer
 } from "lucide-react";
 import { fetchSyllabus, SubjectItem } from "@/lib/api";
 

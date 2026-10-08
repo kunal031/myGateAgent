@@ -6,7 +6,6 @@ import {
   Send, 
   Sparkles, 
   BookOpen, 
-  Globe, 
   Zap,
   FolderSync
 } from "lucide-react";

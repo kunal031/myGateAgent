@@ -19,7 +19,7 @@ export default function MathText({ text, className = "" }: MathTextProps) {
           displayMode: true,
           throwOnError: false,
         })}</div>`;
-      } catch (err) {
+      } catch {
         return `<pre class="text-rose-500 font-mono text-xs">${math}</pre>`;
       }
     });
@@ -31,7 +31,7 @@ export default function MathText({ text, className = "" }: MathTextProps) {
           displayMode: false,
           throwOnError: false,
         });
-      } catch (err) {
+      } catch {
         return `<code class="text-rose-500">${math}</code>`;
       }
     });

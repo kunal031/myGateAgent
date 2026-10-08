@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import type { LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { 
   Flame, 
@@ -16,7 +17,10 @@ import {
 import MathText from "@/components/MathText";
 import { fetchFeed, fetchSyllabus, FeedCardItem, SubjectItem } from "@/lib/api";
 
-const TYPE_CONFIG: Record<string, { label: string; icon: any; color: string; badgeBg: string; border: string }> = {
+const TYPE_CONFIG: Record<
+  string,
+  { label: string; icon: LucideIcon; color: string; badgeBg: string; border: string }
+> = {
   TRAP: {
     label: "TRAP ALERT",
     icon: AlertTriangle,
@@ -54,26 +58,34 @@ export default function FeedPage() {
   const [selectedType, setSelectedType] = useState<string>("all");
   const [loading, setLoading] = useState<boolean>(true);
   const [masteredIds, setMasteredIds] = useState<Set<number>>(new Set());
+  const [reloadKey, setReloadKey] = useState<number>(0);
 
-  const loadData = async () => {
-    setLoading(true);
-    try {
-      const [feedData, syllabusData] = await Promise.all([
-        fetchFeed(selectedSubject, selectedType),
-        fetchSyllabus(),
-      ]);
-      setCards(feedData);
-      setSubjects(syllabusData);
-    } catch (err) {
-      console.error("Failed to load feed", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // See the note in app/quiz/page.tsx: the effect owns the async flow and
+  // `cancelled` guards against out-of-order responses.
   useEffect(() => {
-    loadData();
-  }, [selectedSubject, selectedType]);
+    let cancelled = false;
+
+    async function load() {
+      try {
+        const [feedData, syllabusData] = await Promise.all([
+          fetchFeed(selectedSubject, selectedType),
+          fetchSyllabus(),
+        ]);
+        if (cancelled) return;
+        setCards(feedData);
+        setSubjects(syllabusData);
+      } catch (err) {
+        if (!cancelled) console.error("Failed to load feed", err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSubject, selectedType, reloadKey]);
 
   const toggleMastered = (id: number) => {
     setMasteredIds((prev) => {
@@ -103,7 +115,10 @@ export default function FeedPage() {
         </div>
 
         <button
-          onClick={loadData}
+          onClick={() => {
+            setLoading(true);
+            setReloadKey((k) => k + 1);
+          }}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-slate-300 text-xs font-semibold transition border border-slate-700/80 hover:border-violet-500/40"
         >
           <RefreshCw className="w-3.5 h-3.5 text-cyan-400" />
@@ -117,7 +132,10 @@ export default function FeedPage() {
 
         <select
           value={selectedSubject}
-          onChange={(e) => setSelectedSubject(e.target.value)}
+          onChange={(e) => {
+            setLoading(true);
+            setSelectedSubject(e.target.value);
+          }}
           className="bg-[#090d16] border border-slate-700/80 text-slate-200 text-xs font-medium rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-violet-500"
         >
           <option value="all">All Subjects (12)</option>
@@ -130,7 +148,10 @@ export default function FeedPage() {
 
         <select
           value={selectedType}
-          onChange={(e) => setSelectedType(e.target.value)}
+          onChange={(e) => {
+            setLoading(true);
+            setSelectedType(e.target.value);
+          }}
           className="bg-[#090d16] border border-slate-700/80 text-slate-200 text-xs font-medium rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-violet-500"
         >
           <option value="all">All Types</option>
