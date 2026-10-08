@@ -117,10 +117,24 @@ export async function fetchSyllabus(): Promise<SubjectItem[]> {
   return res.json();
 }
 
-export async function fetchFeed(subjectSlug?: string, cardType?: string): Promise<FeedCardItem[]> {
+export interface FeedPage {
+  items: FeedCardItem[];
+  /** null means no further pages. */
+  next_offset: number | null;
+  total: number;
+}
+
+export async function fetchFeed(
+  subjectSlug?: string,
+  cardType?: string,
+  offset = 0,
+  limit = 18,
+): Promise<FeedPage> {
   const params = new URLSearchParams();
   if (subjectSlug && subjectSlug !== "all") params.append("subject_slug", subjectSlug);
   if (cardType && cardType !== "all") params.append("card_type", cardType);
+  params.append("offset", String(offset));
+  params.append("limit", String(limit));
   const res = await fetch(`${API_BASE}/api/feed?${params.toString()}`);
   if (!res.ok) throw new Error("Failed to fetch feed");
   return res.json();
