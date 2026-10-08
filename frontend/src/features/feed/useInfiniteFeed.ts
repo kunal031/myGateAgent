@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { FeedCardItem, fetchFeed } from "@/lib/api";
 
-export const PAGE_SIZE = 18; // within the 15-20 per batch target
+export const PAGE_SIZE = 18; // 15-20 per batch; ~6-9 masonry rows
 
 interface State {
   cards: FeedCardItem[];
@@ -90,7 +90,48 @@ export function useInfiniteFeed(subjectSlug: string, cardType: string) {
     if (state.hasMore && !state.loadingMore && !state.loading) void load(false);
   }, [load, state.hasMore, state.loadingMore, state.loading]);
 
-  return { ...state, loadMore, refresh: () => load(true) };
+  /**
+   * Remove a card and immediately top the list back up.
+   *
+   * The card goes straight away so the grid reflows without waiting on the
+   * network. A single replacement is then fetched from the current offset,
+   * which keeps the visible count steady as cards are dismissed.
+   */
+  const dismiss = useCallback(
+    async (id: number) => {
+      setState((prev) => ({
+        ...prev,
+        cards: prev.cards.filter((c) => c.id !== id),
+        total: Math.max(0, prev.total - 1),
+      }));
+
+      if (!state.hasMore || inFlight.current) return;
+      inFlight.current = true;
+      const token = requestRef.current;
+
+      try {
+        const page = await fetchFeed(subjectSlug, cardType, offsetRef.current, 1);
+        if (token !== requestRef.current) return;
+        offsetRef.current = page.next_offset ?? offsetRef.current + page.items.length;
+        setState((prev) => {
+          const seen = new Set(prev.cards.map((c) => c.id));
+          const fresh = page.items.filter((c) => !seen.has(c.id));
+          return {
+            ...prev,
+            cards: [...prev.cards, ...fresh],
+            hasMore: page.next_offset !== null,
+          };
+        });
+      } catch {
+        // The card is already gone; a failed top-up is not worth surfacing.
+      } finally {
+        inFlight.current = false;
+      }
+    },
+    [subjectSlug, cardType, state.hasMore],
+  );
+
+  return { ...state, loadMore, dismiss, refresh: () => load(true) };
 }
 
 /** Fires `onHit` when the sentinel scrolls into view. */

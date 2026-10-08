@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { Flame, Loader2, RefreshCw } from "lucide-react";
+import React, { useCallback, useEffect, useState } from "react";
+import { Loader2 } from "lucide-react";
 
 import FeedCard from "@/features/feed/FeedCard";
+import { useHideOnScroll } from "@/features/feed/useHideOnScroll";
 import {
   useInfiniteFeed,
   useScrollSentinel,
@@ -11,119 +12,107 @@ import {
 import { SubjectItem, fetchSyllabus } from "@/lib/api";
 
 const CARD_TYPES = [
-  { value: "all", label: "All types" },
-  { value: "TRAP", label: "Trap alerts" },
+  { value: "all", label: "All" },
+  { value: "TRAP", label: "Traps" },
   { value: "FORMULA", label: "Formulas" },
-  { value: "CONCEPT", label: "Core concepts" },
+  { value: "CONCEPT", label: "Concepts" },
   { value: "SHORTCUT", label: "Shortcuts" },
 ];
+
+/** Exit animation length; must match the card's transition duration. */
+const LEAVE_MS = 260;
 
 export default function FeedPage() {
   const [subjects, setSubjects] = useState<SubjectItem[]>([]);
   const [subjectSlug, setSubjectSlug] = useState("all");
   const [cardType, setCardType] = useState("all");
-  const [mastered, setMastered] = useState<Set<number>>(new Set());
+  const [leaving, setLeaving] = useState<Set<number>>(new Set());
 
-  const { cards, loading, loadingMore, error, total, hasMore, loadMore, refresh } =
+  const { cards, loading, loadingMore, error, total, hasMore, loadMore, dismiss } =
     useInfiniteFeed(subjectSlug, cardType);
 
   const sentinelRef = useScrollSentinel(loadMore, hasMore && !loading);
+  const headerHidden = useHideOnScroll();
 
   useEffect(() => {
     let cancelled = false;
     fetchSyllabus()
-      .then((data) => {
-        if (!cancelled) setSubjects(data);
-      })
+      .then((data) => !cancelled && setSubjects(data))
       .catch(() => {});
     return () => {
       cancelled = true;
     };
   }, []);
 
-  const toggleMastered = (id: number) =>
-    setMastered((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  // Fade the card out first, then remove it, so the grid does not jump.
+  const handleMastered = useCallback(
+    (id: number) => {
+      setLeaving((prev) => new Set(prev).add(id));
+      window.setTimeout(() => {
+        void dismiss(id);
+        setLeaving((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }, LEAVE_MS);
+    },
+    [dismiss],
+  );
 
-  const selectStyle = {
-    background: "var(--surface)",
+  const chipStyle = (active: boolean) => ({
+    background: active ? "var(--accent)" : "var(--surface)",
     border: "var(--line-width) solid var(--line)",
     color: "var(--ink)",
-  };
+    boxShadow: active ? "var(--shadow-sm)" : "none",
+  });
 
   return (
-    <div className="space-y-4">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5">
-          <span
-            className="flex h-9 w-9 items-center justify-center rounded-[var(--radius)]"
-            style={{
-              background: "var(--accent)",
-              border: "var(--line-width) solid var(--line)",
-              boxShadow: "var(--shadow-sm)",
-            }}
+    <div className="space-y-3">
+      {/* Sticky controls that slide away on scroll down and return on scroll
+          up, so the cards get the full screen while reading. */}
+      <div
+        className="sticky top-0 z-20 -mx-4 px-4 py-2 transition-transform duration-200 md:-mx-8 md:px-8"
+        style={{
+          background: "var(--canvas)",
+          transform: headerHidden ? "translateY(-110%)" : "translateY(0)",
+        }}
+      >
+        <div className="flex items-center gap-2 overflow-x-auto pb-1">
+          <select
+            value={subjectSlug}
+            onChange={(e) => setSubjectSlug(e.target.value)}
+            aria-label="Filter by subject"
+            className="min-h-10 shrink-0 rounded-[var(--radius-pill)] px-3 text-[11px] font-bold"
+            style={chipStyle(subjectSlug !== "all")}
           >
-            <Flame className="h-4 w-4" style={{ color: "var(--ink)" }} />
-          </span>
-          <div>
-            <h1 className="text-lg font-extrabold leading-tight sm:text-xl" style={{ color: "var(--ink)" }}>
-              Concept &amp; Trap Feed
-            </h1>
-            <p className="text-[11px] font-semibold" style={{ color: "var(--ink-faint)" }}>
-              {cards.length} of {total} cards
-            </p>
-          </div>
-        </div>
+            <option value="all">All subjects</option>
+            {subjects.map((s) => (
+              <option key={s.slug} value={s.slug}>
+                {s.name}
+              </option>
+            ))}
+          </select>
 
-        <button
-          type="button"
-          onClick={refresh}
-          className="flex min-h-11 items-center gap-1.5 rounded-[var(--radius-pill)] px-3.5 text-xs font-bold"
-          style={{
-            background: "var(--surface)",
-            border: "var(--line-width) solid var(--line)",
-            color: "var(--ink)",
-            boxShadow: "var(--shadow-sm)",
-          }}
-        >
-          <RefreshCw className="h-3.5 w-3.5" />
-          Refresh
-        </button>
-      </header>
-
-      <div className="flex flex-wrap gap-2">
-        <select
-          value={subjectSlug}
-          onChange={(e) => setSubjectSlug(e.target.value)}
-          aria-label="Filter by subject"
-          className="min-h-11 flex-1 rounded-[var(--radius-pill)] px-3.5 text-xs font-semibold sm:flex-none"
-          style={selectStyle}
-        >
-          <option value="all">All subjects</option>
-          {subjects.map((s) => (
-            <option key={s.slug} value={s.slug}>
-              {s.name}
-            </option>
-          ))}
-        </select>
-
-        <select
-          value={cardType}
-          onChange={(e) => setCardType(e.target.value)}
-          aria-label="Filter by card type"
-          className="min-h-11 flex-1 rounded-[var(--radius-pill)] px-3.5 text-xs font-semibold sm:flex-none"
-          style={selectStyle}
-        >
           {CARD_TYPES.map((t) => (
-            <option key={t.value} value={t.value}>
+            <button
+              key={t.value}
+              type="button"
+              onClick={() => setCardType(t.value)}
+              className="min-h-10 shrink-0 rounded-[var(--radius-pill)] px-3 text-[11px] font-bold"
+              style={chipStyle(cardType === t.value)}
+            >
               {t.label}
-            </option>
+            </button>
           ))}
-        </select>
+
+          <span
+            className="ml-auto shrink-0 pl-2 text-[11px] font-bold"
+            style={{ color: "var(--ink-faint)" }}
+          >
+            {total}
+          </span>
+        </div>
       </div>
 
       {error && (
@@ -152,34 +141,35 @@ export default function FeedPage() {
             color: "var(--ink-faint)",
           }}
         >
-          No cards match this filter.
+          Nothing left here. Switch filters or refresh.
         </p>
       ) : (
-        <div className="space-y-4">
+        /* CSS columns pack cards by height with no row gaps, which is what
+           makes the layout read as a masonry wall rather than a grid. */
+        <div className="columns-1 gap-3 sm:columns-2 lg:columns-3">
           {cards.map((card) => (
             <FeedCard
               key={card.id}
               card={card}
-              mastered={mastered.has(card.id)}
-              onToggleMastered={toggleMastered}
+              leaving={leaving.has(card.id)}
+              onMastered={handleMastered}
             />
           ))}
         </div>
       )}
 
-      {/* Sentinel: loading starts 600px before this scrolls into view. */}
       {hasMore && !loading && <div ref={sentinelRef} aria-hidden className="h-px" />}
 
       {loadingMore && (
-        <p className="flex items-center justify-center gap-2 py-6 text-xs font-semibold" style={{ color: "var(--ink-faint)" }}>
+        <p className="flex items-center justify-center gap-2 py-5 text-xs font-semibold" style={{ color: "var(--ink-faint)" }}>
           <Loader2 className="h-4 w-4 animate-spin" />
           Loading more...
         </p>
       )}
 
       {!hasMore && cards.length > 0 && (
-        <p className="py-6 text-center text-xs font-semibold" style={{ color: "var(--ink-faint)" }}>
-          You have reached the end.
+        <p className="py-5 text-center text-xs font-semibold" style={{ color: "var(--ink-faint)" }}>
+          That is everything for this filter.
         </p>
       )}
     </div>
