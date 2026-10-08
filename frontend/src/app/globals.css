@@ -1,32 +1,48 @@
 @import "tailwindcss";
 
-:root {
-  --background: #070a12;
-  --foreground: #f1f5f9;
+html {
+  /* The off-canvas drawer sits at translateX(-100%) while closed; without
+     this, its box still extends the document's scrollable width on mobile. */
+  overflow-x: hidden;
 }
 
 body {
-  background: radial-gradient(circle at 50% 0%, #15102a 0%, #070a12 55%, #05070d 100%);
-  color: var(--foreground);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  min-height: 100vh;
+  overflow-x: hidden;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  min-height: 100dvh;
+  /* Stops iOS Safari inflating text in landscape. */
+  -webkit-text-size-adjust: 100%;
 }
 
-/* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
-
 ::-webkit-scrollbar-track {
-  background: #090d16;
+  background: var(--surface-sunk);
 }
-
 ::-webkit-scrollbar-thumb {
-  background: #1e293b;
-  border-radius: 9999px;
+  background: var(--line);
+  border-radius: var(--radius-pill);
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: #334155;
+/* KaTeX blocks can exceed a phone's width; scroll them rather than letting
+   them widen the page. */
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-block: 0.25rem;
+}
+
+/* Honour reduced-motion for the drawer and any transitions. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
