@@ -1,12 +1,8 @@
-"""Embedding generation and on-disk vector storage.
+"""Embedding generation via Gemini.
 
-No vector database. The corpus is ~1,800 chunks, where a brute-force matrix
-multiply takes well under a millisecond -- an HNSW index would be pure
-overhead. Vectors live in a single .npy file alongside an id list, loaded
-once into memory.
-
-Embeddings are produced at ingest time only and cached, so searching never
-makes an API call.
+Document embeddings are produced at ingest time only; query embeddings are
+cached on disk, so searching normally makes no API call. Storage and search
+live in vector_store.py.
 """
 
 import hashlib
@@ -26,8 +22,6 @@ EMBED_MODEL = "gemini-embedding-001"
 EMBED_DIMS = 3072
 
 _VECTOR_DIR = settings.DATA_DIR / "vectors"
-_VECTOR_PATH = _VECTOR_DIR / "chunks.npy"
-_IDS_PATH = _VECTOR_DIR / "chunk_ids.json"
 
 # Gemini accepts batches; keep them modest so one failure costs little.
 BATCH_SIZE = 32
@@ -99,69 +93,3 @@ def embed_query(text: str) -> np.ndarray:
         return vector
     finally:
         conn.close()
-
-
-class VectorStore:
-    """Memory-resident vectors with append and atomic save."""
-
-    def __init__(self) -> None:
-        self.ids: list[int] = []
-        self.matrix: np.ndarray = np.zeros((0, EMBED_DIMS), dtype=np.float32)
-
-    @classmethod
-    def load(cls) -> "VectorStore":
-        store = cls()
-        if _VECTOR_PATH.exists() and _IDS_PATH.exists():
-            try:
-                store.matrix = np.load(_VECTOR_PATH)
-                store.ids = json.loads(_IDS_PATH.read_text())
-                if len(store.ids) != store.matrix.shape[0]:
-                    logger.error(
-                        "Vector store is inconsistent (%d ids vs %d rows); "
-                        "treating as empty. Re-run embedding.",
-                        len(store.ids), store.matrix.shape[0],
-                    )
-                    return cls()
-            except (OSError, ValueError) as exc:
-                logger.error("Could not load vector store: %s", exc)
-                return cls()
-        return store
-
-    def save(self) -> None:
-        _VECTOR_DIR.mkdir(parents=True, exist_ok=True)
-        # Write to temp paths then replace, so an interrupted save cannot
-        # leave ids and vectors out of sync.
-        # np.save appends .npy unless the path already ends in it, so the
-        # temp name must keep that suffix or the file lands somewhere else.
-        tmp_vec = _VECTOR_PATH.with_name(_VECTOR_PATH.name + ".tmp.npy")
-        tmp_ids = _IDS_PATH.with_name(_IDS_PATH.name + ".tmp")
-        np.save(tmp_vec, self.matrix)
-        tmp_ids.write_text(json.dumps(self.ids))
-        tmp_vec.replace(_VECTOR_PATH)
-        tmp_ids.replace(_IDS_PATH)
-
-    def add(self, chunk_ids: list[int], vectors: np.ndarray) -> None:
-        if not chunk_ids:
-            return
-        known = set(self.ids)
-        keep = [i for i, cid in enumerate(chunk_ids) if cid not in known]
-        if not keep:
-            return
-        self.ids.extend(chunk_ids[i] for i in keep)
-        self.matrix = (
-            vectors[keep] if self.matrix.shape[0] == 0
-            else np.vstack([self.matrix, vectors[keep]])
-        )
-
-    def search(self, query_vector: np.ndarray, top_k: int = 8) -> list[tuple[int, float]]:
-        """Return (chunk_id, similarity) pairs, best first."""
-        if self.matrix.shape[0] == 0:
-            return []
-        sims = self.matrix @ query_vector
-        k = min(top_k, sims.shape[0])
-        top = np.argpartition(-sims, k - 1)[:k]
-        top = top[np.argsort(-sims[top])]
-        return [(self.ids[i], float(sims[i])) for i in top]
-
-    def __len__(self) -> int:
-        return len(self.ids)

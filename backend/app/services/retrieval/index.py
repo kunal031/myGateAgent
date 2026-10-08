@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 
 from ...models.sources import SourceChunk
 from . import keyword
-from .embeddings import VectorStore, embed_texts
+from .embeddings import embed_texts
+from .vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,13 @@ def index_pending_chunks(db: Session, *, batch_limit: int | None = None) -> dict
     if chunks:
         logger.info("Embedding %d chunks...", len(chunks))
         vectors = embed_texts([c.content for c in chunks])
-        store.add([c.id for c in chunks], vectors)
+        # Carry the tags so search can scope without a DB round trip.
+        store.add(
+            [c.id for c in chunks],
+            vectors,
+            subject_ids=[c.subject_id for c in chunks],
+            topic_ids=[c.topic_id for c in chunks],
+        )
         store.save()
         for chunk in chunks:
             chunk.is_embedded = True

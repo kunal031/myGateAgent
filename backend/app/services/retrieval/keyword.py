@@ -81,21 +81,43 @@ def build_match_query(query: str) -> str:
     return " OR ".join(f'"{t}"' for t in unique)
 
 
-def search(db: Session, query: str, top_k: int = 8) -> list[tuple[int, float]]:
+def search(
+    db: Session,
+    query: str,
+    top_k: int = 8,
+    *,
+    subject_id: int | None = None,
+    topic_id: int | None = None,
+) -> list[tuple[int, float]]:
     """Return (chunk_id, score) pairs, best first. Score is normalised to
-    0..1 so it can be fused with cosine similarity."""
+    0..1 so it can be fused with cosine similarity.
+
+    Scoping joins back to source_chunks so the keyword half honours the same
+    subject/topic restriction as the semantic half; otherwise fusion would
+    reintroduce the wrong-subject chunk that scoping exists to exclude.
+    """
     match = build_match_query(query)
     if not match:
         return []
 
     ensure_table(db)
-    rows = db.execute(
-        text(
-            "SELECT chunk_id, bm25(chunk_fts) AS score FROM chunk_fts "
-            "WHERE chunk_fts MATCH :q ORDER BY score LIMIT :k"
-        ),
-        {"q": match, "k": top_k},
-    ).fetchall()
+    sql = (
+        "SELECT f.chunk_id AS chunk_id, bm25(chunk_fts) AS score "
+        "FROM chunk_fts f "
+    )
+    params: dict = {"q": match, "k": top_k}
+    if subject_id is not None or topic_id is not None:
+        sql += "JOIN source_chunks c ON c.id = f.chunk_id "
+    sql += "WHERE chunk_fts MATCH :q "
+    if topic_id is not None:
+        sql += "AND (c.topic_id = :topic_id OR c.topic_id IS NULL) "
+        params["topic_id"] = topic_id
+    elif subject_id is not None:
+        sql += "AND (c.subject_id = :subject_id OR c.subject_id IS NULL) "
+        params["subject_id"] = subject_id
+    sql += "ORDER BY score LIMIT :k"
+
+    rows = db.execute(text(sql), params).fetchall()
 
     if not rows:
         return []

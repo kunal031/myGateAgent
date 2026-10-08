@@ -16,7 +16,8 @@ from sqlalchemy.orm import Session
 
 from ...models.sources import Source, SourceChunk
 from . import keyword
-from .embeddings import VectorStore, embed_query
+from .embeddings import embed_query
+from .vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +52,17 @@ def search(
     *,
     top_k: int = 6,
     subject_id: int | None = None,
+    topic_id: int | None = None,
     store: VectorStore | None = None,
     semantic: bool = True,
 ) -> list[Match]:
     """Retrieve the most relevant chunks for a query.
+
+    Passing subject_id (or the narrower topic_id) scopes the search, which
+    matters for accuracy rather than speed: GATE vocabulary collides across
+    subjects, so an unscoped query for "deadlock" while studying OS can
+    return the DBMS answer. Chunks with no subject tag stay eligible, since
+    a cross-subject source such as the mistakes log applies everywhere.
 
     `semantic=False` skips the embedding API call, which keeps keyword-only
     search available when the Gemini quota is exhausted.
@@ -62,7 +70,8 @@ def search(
     pool = max(top_k * 4, 20)
     ranked_lists: list[list[int]] = []
 
-    kw = keyword.search(db, query, top_k=pool)
+    kw = keyword.search(db, query, top_k=pool,
+                        subject_id=subject_id, topic_id=topic_id)
     if kw:
         ranked_lists.append([cid for cid, _ in kw])
 
@@ -70,7 +79,10 @@ def search(
         store = store if store is not None else VectorStore.load()
         if len(store):
             try:
-                hits = store.search(embed_query(query), top_k=pool)
+                hits = store.search(
+                    embed_query(query), top_k=pool,
+                    subject_id=subject_id, topic_id=topic_id,
+                )
                 ranked_lists.append([cid for cid, _ in hits])
             except Exception as exc:  # quota, network: degrade to keyword only
                 logger.warning("Semantic search unavailable (%s); using keyword only", exc)
@@ -95,6 +107,8 @@ def search(
         if entry is None:
             continue
         chunk, source = entry
+        if topic_id is not None and chunk.topic_id not in (None, topic_id):
+            continue
         if subject_id is not None and chunk.subject_id not in (None, subject_id):
             continue
         matches.append(Match(
