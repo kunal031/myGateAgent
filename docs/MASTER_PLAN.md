@@ -117,6 +117,11 @@ backend/app/
 │   ├── syllabus.py   feed.py   quiz.py    stats.py
 │   ├── assistant.py  sources.py  tracker.py  modes.py
 ├── services/                   # business logic, no HTTP imports
+│   ├── retrieval/              # hybrid search, NO vector database
+│   │   ├── embeddings.py       # Gemini embeddings -> .npy store
+│   │   ├── keyword.py          # SQLite FTS5 + BM25
+│   │   ├── hybrid.py           # Reciprocal Rank Fusion of both
+│   │   └── index.py            # resumable index build + stats
 │   ├── feed/
 │   │   ├── ranking.py          # weight + mistake boost, SQL-side
 │   │   ├── modes.py            # BASIC / ADVANCED / REVISION selection
@@ -307,6 +312,14 @@ Gemini chat, 3 languages, context-aware, grounded + cited.
 ### Phase 5 — Analytics
 Feed analysis + performance analytics, both surfaces.
 
+### Phase 5b — Mobile responsiveness *(newly scoped)*
+The current shell is desktop-only: `layout.tsx` sets `ml-64` unconditionally and
+the sidebar is `w-60 fixed`, so on a 390px phone 256px of 390px is margin,
+leaving ~134px usable. There is no hamburger, drawer, or mobile nav, and only 10
+responsive breakpoints exist across the app. Needs: collapsible drawer nav,
+responsive shell, touch-sized quiz option targets, and horizontally scrollable
+KaTeX blocks.
+
 ### Phase 6 — Real test engine
 The genuinely missing Phase-2-from-the-old-README: 65-question palette, 3-hour timer,
 virtual calculator, section timing, full scoring report.
@@ -362,6 +375,17 @@ From what the codebase and your targets imply — act on these independently of 
 - Claude-vision-style page transcription, done with Gemini vision
 - Pre-generated reviewed feed **and** live Search-grounded web feed (both)
 - Provenance mandatory on all generated content
+- **No vector database, no cloud database.** Measured: the corpus is ~1,800
+  chunks (~6 MB text); brute-force search over 2,000 x 3072-dim vectors takes
+  0.38 ms, so an HNSW index is pure overhead. ChromaDB cost 316 MB RSS and
+  246 MB disk (onnxruntime + a 166 MB local model) and was removed. Vectors
+  live in a `.npy` file; keyword search uses SQLite FTS5; results are fused
+  with RRF. SQLite stays as the database -- 5 users, single writer, and the
+  whole study history is one copyable file. A cloud DB would add network
+  latency to every request, which *hurts* mobile responsiveness.
+- Embeddings via `gemini-embedding-001` at ingest time only, cached; query
+  embeddings cached on disk (700 ms -> 0.2 ms). `semantic=false` gives a
+  keyword-only path (~7 ms) when quota is exhausted.
 - Small modular files, feature-grouped folders, ~200-line ceiling
 - Monorepo: one git repo at the project root (the nested `frontend/.git` scaffold
   repo from create-next-app was removed; it held only the boilerplate commit)
