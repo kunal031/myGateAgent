@@ -18,10 +18,21 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "GateMaster API"
     VERSION: str = "1.0.0"
 
-    # SQLite by default; set to a postgresql+psycopg:// DSN to use Postgres.
-    DATABASE_URL: str = f"sqlite:///{BASE_DIR}/gatemaster.db"
+    # Explicit override. Leave empty to let the resolver below choose.
+    DATABASE_URL: str = ""
 
-    # Kept so the migration can read the old database while writing the new.
+    # Local Postgres, used for development.
+    POSTGRES_URL: str = "postgresql+psycopg://kunal@localhost/gatemaster"
+
+    # Managed Postgres (Aiven). Set this to keep data in the cloud and to
+    # let a deployed instance reach the same database.
+    POSTGRESQL_AIVEN_URI: str = ""
+
+    # Which backend to prefer when more than one is configured:
+    # "aiven", "local" or "sqlite".
+    DB_TARGET: str = "local"
+
+    # The original SQLite file, kept so the migration can read it.
     SQLITE_URL: str = f"sqlite:///{BASE_DIR}/gatemaster.db"
 
     # Browsers reject wildcard origins when credentials are allowed, so these
@@ -56,6 +67,51 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
+
+    @staticmethod
+    def _normalise_dsn(dsn: str) -> str:
+        """Make a provider DSN usable by SQLAlchemy + psycopg 3.
+
+        Aiven hands out a `postgres://` URL; SQLAlchemy needs a driver, and
+        without one it picks psycopg2, which is not installed.
+        """
+        dsn = dsn.strip().strip('"').strip("'")
+        if not dsn:
+            return ""
+        for prefix in ("postgresql+psycopg://", "postgresql+psycopg2://"):
+            if dsn.startswith(prefix):
+                return dsn
+        if dsn.startswith("postgres://"):
+            return "postgresql+psycopg://" + dsn[len("postgres://"):]
+        if dsn.startswith("postgresql://"):
+            return "postgresql+psycopg://" + dsn[len("postgresql://"):]
+        return dsn
+
+    @property
+    def resolved_database_url(self) -> str:
+        """The DSN the app actually connects with.
+
+        An explicit DATABASE_URL always wins. Otherwise DB_TARGET chooses,
+        falling back to local Postgres and then SQLite, so a missing cloud
+        URI degrades to something that works rather than failing at import.
+        """
+        if self.DATABASE_URL.strip():
+            return self._normalise_dsn(self.DATABASE_URL)
+
+        aiven = self._normalise_dsn(self.POSTGRESQL_AIVEN_URI)
+        if self.DB_TARGET == "aiven" and aiven:
+            return aiven
+        if self.DB_TARGET == "sqlite":
+            return self.SQLITE_URL
+        return self.POSTGRES_URL or self.SQLITE_URL
+
+    @property
+    def database_target(self) -> str:
+        url = self.resolved_database_url
+        if url.startswith("sqlite"):
+            return "sqlite"
+        return "aiven" if self.POSTGRESQL_AIVEN_URI.strip() and \
+            self._normalise_dsn(self.POSTGRESQL_AIVEN_URI) == url else "local-postgres"
 
     @property
     def gemini_configured(self) -> bool:

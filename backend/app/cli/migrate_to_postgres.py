@@ -36,6 +36,12 @@ SKIP_COLUMNS = {"source_chunks": {"embedding"}}
 VECTOR_DIR = settings.DATA_DIR / "vectors"
 
 
+def _safe(dsn: str) -> str:
+    """Hide the password before printing a connection string."""
+    import re
+    return re.sub(r"://([^:/@]+):[^@]+@", r"://\1:***@", dsn)
+
+
 def _engines(postgres_url: str):
     source = create_engine(settings.SQLITE_URL)
     target = create_engine(postgres_url)
@@ -126,8 +132,13 @@ def load_vectors(target_engine, *, dry_run: bool) -> int:
 
 
 def create_indexes(target_engine) -> None:
-    """HNSW for vectors, GIN for keyword search."""
+    """HNSW for vectors, GIN for keyword search.
+
+    The extension is created first: a managed instance starts without it,
+    and the halfvec column cannot be indexed until it exists.
+    """
     with target_engine.begin() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_chunk_embedding_hnsw "
             "ON source_chunks USING hnsw (embedding halfvec_cosine_ops) "
@@ -141,15 +152,32 @@ def create_indexes(target_engine) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--postgres-url",
-                        default="postgresql+psycopg://kunal@localhost/gatemaster")
+    parser.add_argument("--postgres-url", default=None,
+                        help="target DSN; defaults to POSTGRES_URL")
+    parser.add_argument("--to-aiven", action="store_true",
+                        help="target POSTGRESQL_AIVEN_URI instead")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    source_engine, target_engine = _engines(args.postgres_url)
+    if args.to_aiven:
+        target_url = settings._normalise_dsn(settings.POSTGRESQL_AIVEN_URI)
+        if not target_url:
+            raise SystemExit(
+                "POSTGRESQL_AIVEN_URI is not set in backend/.env"
+            )
+    else:
+        target_url = args.postgres_url or settings.POSTGRES_URL
+
+    source_engine, target_engine = _engines(target_url)
+
+    # The vector extension must exist before create_all, or the halfvec
+    # column has no type to resolve against.
+    with target_engine.begin() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    Base.metadata.create_all(bind=target_engine)
 
     print(f"source: {settings.SQLITE_URL}")
-    print(f"target: {args.postgres_url}\n")
+    print(f"target: {_safe(target_url)}\n")
 
     counts = copy_tables(source_engine, target_engine, dry_run=args.dry_run)
     for name, (read, written) in counts.items():

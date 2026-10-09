@@ -14,16 +14,17 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 from .config import settings
 
-IS_SQLITE = settings.DATABASE_URL.startswith("sqlite")
+DATABASE_URL = settings.resolved_database_url
+IS_SQLITE = DATABASE_URL.startswith("sqlite")
 
 if IS_SQLITE:
     engine = create_engine(
-        settings.DATABASE_URL,
+        DATABASE_URL,
         connect_args={"check_same_thread": False, "timeout": 30.0},
     )
 else:
     engine = create_engine(
-        settings.DATABASE_URL,
+        DATABASE_URL,
         pool_size=5,
         max_overflow=10,
         # Recycle before Postgres' own idle timeout can close a pooled
