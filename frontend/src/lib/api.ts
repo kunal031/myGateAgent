@@ -217,6 +217,7 @@ export interface ExamQuestion {
 export interface ExamSummary {
   id: number;
   name: string;
+  kind?: "quiz" | "test";
   pattern: string;
   status: "in_progress" | "submitted" | "abandoned";
   total_questions: number;
@@ -275,9 +276,13 @@ export async function startExam(body: {
   pattern: string;
   subject_slug?: string;
   subject_slugs?: string[];
+  topic_slug?: string;
+  question_type?: string;
+  difficulty?: string;
   questions?: number;
   duration_minutes?: number;
   name?: string;
+  kind?: "quiz" | "test";
 }): Promise<ExamSummary> {
   const res = await fetch(`${API_BASE}/api/exam/start`, {
     method: "POST",
@@ -324,9 +329,39 @@ export async function fetchExamResult(id: number): Promise<ExamResult> {
   return res.json();
 }
 
-export async function fetchExamHistory(limit = 20): Promise<ExamSummary[]> {
-  const res = await fetch(`${API_BASE}/api/exam?limit=${limit}`);
+export async function fetchExamHistory(
+  options: { limit?: number; kind?: "quiz" | "test"; subjectSlug?: string; since?: string } = {},
+): Promise<ExamSummary[]> {
+  const params = new URLSearchParams({ limit: String(options.limit ?? 20) });
+  if (options.kind) params.set("kind", options.kind);
+  if (options.subjectSlug && options.subjectSlug !== "all") {
+    params.set("subject_slug", options.subjectSlug);
+  }
+  if (options.since) params.set("since", options.since);
+
+  const res = await fetch(`${API_BASE}/api/exam?${params}`);
   if (!res.ok) throw new Error("Failed to load history");
+  return res.json();
+}
+
+export interface CheckResponse {
+  position: number;
+  is_correct: boolean;
+  marks_obtained: number;
+  correct_answer: string;
+  explanation: string;
+  provenance: string;
+}
+
+/** Grade one question mid-quiz. Quiz sessions only. */
+export async function checkQuizAnswer(
+  sessionId: number,
+  position: number,
+): Promise<CheckResponse> {
+  const res = await fetch(`${API_BASE}/api/exam/${sessionId}/check/${position}`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error((await res.json()).detail ?? "Could not check answer");
   return res.json();
 }
 

@@ -43,7 +43,7 @@ export default function TestPage() {
         if (first) setSubject(first.slug);
       })
       .catch(() => !cancelled && setError("Could not load test patterns."));
-    fetchExamHistory(10).then((h) => !cancelled && setHistory(h)).catch(() => {});
+    fetchExamHistory({ limit: 10, kind: "test" }).then((h) => !cancelled && setHistory(h)).catch(() => {});
     return () => { cancelled = true; };
   }, []);
 

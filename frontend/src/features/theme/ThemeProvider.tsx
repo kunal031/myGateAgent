@@ -1,6 +1,8 @@
 "use client";
 
-import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
+import React, {
+  createContext, useCallback, useContext, useSyncExternalStore,
+} from "react";
 
 export const THEMES = ["synapse", "light", "dark"] as const;
 export type Theme = (typeof THEMES)[number];
@@ -19,6 +21,23 @@ interface ThemeContextValue {
   setTheme: (theme: Theme) => void;
 }
 
+function readThemeAttribute(): Theme {
+  const current = document.documentElement.getAttribute("data-theme");
+  return current && THEMES.includes(current as Theme)
+    ? (current as Theme)
+    : DEFAULT_THEME;
+}
+
+/** Re-read the attribute whenever anything changes it. */
+function subscribeToThemeAttribute(onChange: () => void): () => void {
+  const observer = new MutationObserver(onChange);
+  observer.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["data-theme"],
+  });
+  return () => observer.disconnect();
+}
+
 const ThemeContext = createContext<ThemeContextValue>({
   theme: DEFAULT_THEME,
   setTheme: () => {},
@@ -27,23 +46,18 @@ const ThemeContext = createContext<ThemeContextValue>({
 export const useTheme = () => useContext(ThemeContext);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  // Starts at the default on both server and client, so the markup matches
-  // and prerendering never reads the DOM. The inline script in layout.tsx
-  // has already applied the stored theme to <html> before paint, so there
-  // is no flash; this only brings React's state in line after hydration.
-  const [theme, setThemeState] = useState<Theme>(DEFAULT_THEME);
-
-  useEffect(() => {
-    const current = document.documentElement.getAttribute("data-theme");
-    if (current && THEMES.includes(current as Theme) && current !== theme) {
-      setThemeState(current as Theme);
-    }
-    // Runs once after hydration to sync with what the inline script applied.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // The data-theme attribute is the single source of truth: the inline
+  // script in layout.tsx sets it before paint, so there is no flash and no
+  // React state to keep in sync. Subscribing to it rather than mirroring it
+  // avoids both a hydration mismatch and a post-hydration state update.
+  const theme = useSyncExternalStore(
+    subscribeToThemeAttribute,
+    readThemeAttribute,
+    () => DEFAULT_THEME,
+  );
 
   const setTheme = useCallback((next: Theme) => {
-    setThemeState(next);
+    // The MutationObserver above picks this up and re-renders consumers.
     document.documentElement.setAttribute("data-theme", next);
     try {
       localStorage.setItem(STORAGE_KEY, next);

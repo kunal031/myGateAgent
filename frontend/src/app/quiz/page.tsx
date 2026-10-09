@@ -1,474 +1,209 @@
 "use client";
 
-import React, { Suspense, useEffect, useState, useRef } from "react";
-import { useSearchParams } from "next/navigation";
-import { 
-  CheckCircle2, 
-  XCircle, 
-  AlertCircle, 
-  Timer, 
-  Filter, 
-  ArrowRight, 
-  Zap,
-  BookOpen
-} from "lucide-react";
-import MathText from "@/components/MathText";
-import { 
-  fetchQuiz, 
-  fetchSyllabus, 
-  submitQuizAnswer, 
-  QuizQuestion, 
-  SubjectItem, 
-  SubmitResponse 
+import React, { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Play, Target } from "lucide-react";
+
+import SessionHistory from "@/features/exam/SessionHistory";
+import {
+  ExamPatterns, SubjectItem, fetchExamPatterns, fetchSyllabus, startExam,
 } from "@/lib/api";
 
-function QuizDrill() {
-  const searchParams = useSearchParams();
-
-  // Inbound deep links: /quiz?subject=...&topic=...&limit=...
-  // Sent by the feed "Drill Topic" link, the analytics "Start" link, and the
-  // test page "Launch Test" button.
-  const urlSubject = searchParams.get("subject") || "all";
-  const urlTopic = searchParams.get("topic") || "all";
-  const urlType = searchParams.get("type") || "all";
-  const urlDifficulty = searchParams.get("difficulty") || "all";
-  const urlLimit = Number(searchParams.get("limit")) || 20;
-
-  const [questions, setQuestions] = useState<QuizQuestion[]>([]);
-  const [subjects, setSubjects] = useState<SubjectItem[]>([]);
-  const [currentIndex, setCurrentIndex] = useState<number>(0);
-  const [loading, setLoading] = useState<boolean>(true);
-
-  // Filters — seeded from the URL so deep links land pre-filtered
-  const [selectedSubject, setSelectedSubject] = useState<string>(urlSubject);
-  const [selectedTopic, setSelectedTopic] = useState<string>(urlTopic);
-  const [selectedType, setSelectedType] = useState<string>(urlType);
-  const [selectedDifficulty, setSelectedDifficulty] = useState<string>(urlDifficulty);
-
-  // Interaction State
-  const [selectedOptions, setSelectedOptions] = useState<string[]>([]);
-  const [natAnswer, setNatAnswer] = useState<string>("");
-  const [submitting, setSubmitting] = useState<boolean>(false);
-  const [result, setResult] = useState<SubmitResponse | null>(null);
-
-  // Question Timer
-  const [timeSpent, setTimeSpent] = useState<number>(0);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Reload whenever filters change. The effect owns the async flow so no
-  // setState happens synchronously in the effect body, and `cancelled`
-  // prevents a slow response for old filters from overwriting newer results.
-  useEffect(() => {
-    let cancelled = false;
-
-    async function load() {
-      try {
-        const [qData, sData] = await Promise.all([
-          fetchQuiz({
-            subject_slug: selectedSubject,
-            topic_slug: selectedTopic,
-            question_type: selectedType,
-            difficulty: selectedDifficulty,
-            limit: urlLimit,
-          }),
-          fetchSyllabus(),
-        ]);
-        if (cancelled) return;
-        setQuestions(qData);
-        setSubjects(sData);
-        setResult(null);
-        setSelectedOptions([]);
-        setNatAnswer("");
-        setCurrentIndex(0);
-        setTimeSpent(0);
-      } catch (err) {
-        if (!cancelled) console.error("Failed to load quiz questions", err);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedSubject, selectedTopic, selectedType, selectedDifficulty, urlLimit]);
-
-  useEffect(() => {
-    if (result !== null || loading || questions.length === 0) {
-      if (timerRef.current) clearInterval(timerRef.current);
-      return;
-    }
-
-    timerRef.current = setInterval(() => {
-      setTimeSpent((prev) => prev + 1);
-    }, 1000);
-
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [currentIndex, result, loading, questions.length]);
-
-  const currentQ = questions[currentIndex];
-
-  const handleOptionToggle = (optionId: string) => {
-    if (result !== null) return;
-
-    if (currentQ.question_type === "MCQ") {
-      setSelectedOptions([optionId]);
-    } else if (currentQ.question_type === "MSQ") {
-      setSelectedOptions((prev) =>
-        prev.includes(optionId)
-          ? prev.filter((id) => id !== optionId)
-          : [...prev, optionId].sort()
-      );
-    }
-  };
-
-  const handleSubmit = async () => {
-    if (!currentQ || submitting) return;
-
-    let ans = "";
-    if (currentQ.question_type === "NAT") {
-      if (!natAnswer.trim()) {
-        alert("Enter numerical answer");
-        return;
-      }
-      ans = natAnswer.trim();
-    } else {
-      if (selectedOptions.length === 0) {
-        alert("Select at least one option");
-        return;
-      }
-      ans = selectedOptions.join(",");
-    }
-
-    setSubmitting(true);
-    try {
-      const res = await submitQuizAnswer({
-        question_id: currentQ.id,
-        user_answer: ans,
-        time_spent_seconds: timeSpent,
-        mode: "quiz",
-      });
-      setResult(res);
-    } catch (err) {
-      console.error("Failed to submit answer", err);
-      alert("Submission error.");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleNext = () => {
-    if (currentIndex < questions.length - 1) {
-      setCurrentIndex((prev) => prev + 1);
-      setSelectedOptions([]);
-      setNatAnswer("");
-      setResult(null);
-      setTimeSpent(0);
-    }
-  };
-
-  const formatTimer = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
-  };
-
-  return (
-    <div className="max-w-4xl mx-auto space-y-4">
-      {/* Header Bar */}
-      <div className="flex items-center justify-between gap-3 pb-2 border-b border-[var(--line)]">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-[var(--accent)] border border-[var(--line)] flex items-center justify-center text-[var(--ink)]">
-            <Zap className="w-4 h-4 fill-cyan-400" />
-          </div>
-          <div>
-            <h1 className="text-xl font-black tracking-tight text-[var(--ink)] flex items-center gap-2">
-              Quiz Drill
-              {questions.length > 0 && (
-                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-[var(--accent)] text-[var(--ink)] border border-[var(--line)]">
-                  {currentIndex + 1} / {questions.length}
-                </span>
-              )}
-            </h1>
-          </div>
-        </div>
-
-        {questions.length > 0 && (
-          <div className="flex items-center gap-2 bg-[var(--surface)] px-3 py-1.5 rounded-xl border border-[var(--line)]">
-            <Timer className="w-4 h-4 text-amber-400" />
-            <span className="font-mono text-xs font-bold text-amber-300">
-              {formatTimer(timeSpent)}
-            </span>
-          </div>
-        )}
-      </div>
-
-      {/* Filter Row */}
-      <div className="p-2.5 rounded-xl bg-[var(--surface)] border border-[var(--line)] flex flex-wrap items-center gap-2.5">
-        <Filter className="w-3.5 h-3.5 text-[var(--ink)] ml-1 shrink-0" />
-
-        <select
-          value={selectedSubject}
-          onChange={(e) => {
-            setLoading(true);
-            setSelectedSubject(e.target.value);
-            setSelectedTopic("all");
-          }}
-          className="bg-[var(--surface-sunk)] border border-[var(--line)] text-[var(--ink)] text-xs font-medium rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-violet-500"
-        >
-          <option value="all">All Subjects (12)</option>
-          {subjects.map((sub) => (
-            <option key={sub.slug} value={sub.slug}>
-              {sub.name}
-            </option>
-          ))}
-        </select>
-
-        {selectedSubject !== "all" && (
-          <select
-            value={selectedTopic}
-            onChange={(e) => {
-              setLoading(true);
-              setSelectedTopic(e.target.value);
-            }}
-            className="bg-[var(--surface-sunk)] border border-[var(--line)] text-[var(--ink)] text-xs font-medium rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-violet-500"
-          >
-            <option value="all">All Topics</option>
-            {subjects
-              .find((s) => s.slug === selectedSubject)
-              ?.topics.map((t) => (
-                <option key={t.slug} value={t.slug}>
-                  {t.name}
-                </option>
-              ))}
-          </select>
-        )}
-
-        <select
-          value={selectedType}
-          onChange={(e) => {
-            setLoading(true);
-            setSelectedType(e.target.value);
-          }}
-          className="bg-[var(--surface-sunk)] border border-[var(--line)] text-[var(--ink)] text-xs font-medium rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-violet-500"
-        >
-          <option value="all">All Types</option>
-          <option value="MCQ">MCQ</option>
-          <option value="MSQ">MSQ</option>
-          <option value="NAT">NAT</option>
-        </select>
-
-        <select
-          value={selectedDifficulty}
-          onChange={(e) => {
-            setLoading(true);
-            setSelectedDifficulty(e.target.value);
-          }}
-          className="bg-[var(--surface-sunk)] border border-[var(--line)] text-[var(--ink)] text-xs font-medium rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-violet-500"
-        >
-          <option value="all">All Difficulties</option>
-          <option value="Foundational">Foundational</option>
-          <option value="Standard GATE">Standard GATE</option>
-          <option value="Rank Booster">Rank Booster</option>
-        </select>
-      </div>
-
-      {/* Question Card */}
-      {loading ? (
-        <div className="text-center py-20 text-[var(--ink-faint)] text-xs font-mono">
-          Loading questions...
-        </div>
-      ) : questions.length === 0 ? (
-        <div className="text-center py-16 bg-[var(--surface-muted)] rounded-xl border border-[var(--line)] text-[var(--ink-faint)] text-xs font-medium">
-          No questions found for this filter.
-        </div>
-      ) : (
-        <div className="p-5 rounded-xl bg-[var(--surface)] border border-[var(--line)] space-y-4 shadow-lg shadow-black/40">
-          {/* Question Tag Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[var(--line)]">
-            <div className="flex items-center gap-2">
-              <span
-                className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider border ${
-                  currentQ.question_type === "MCQ"
-                    ? "bg-blue-500/15 text-blue-300 border-blue-500/40"
-                    : currentQ.question_type === "MSQ"
-                    ? "bg-purple-500/15 text-purple-300 border-purple-500/40"
-                    : "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
-                }`}
-              >
-                {currentQ.question_type}
-              </span>
-
-              <span className="text-xs font-bold text-[var(--ink)] bg-[var(--surface-sunk)] px-2 py-0.5 rounded border border-[var(--line)]">
-                +{currentQ.marks}M
-                {currentQ.question_type === "MCQ" && (
-                  <span className="text-rose-400 ml-1">(-{currentQ.negative_marks})</span>
-                )}
-                {currentQ.question_type !== "MCQ" && (
-                  <span className="text-[var(--ink-faint)] ml-1">(0 -ve)</span>
-                )}
-              </span>
-
-              <span className="text-xs font-semibold text-[var(--ink-soft)]">
-                {currentQ.subject_name} · <span className="text-[var(--ink-faint)]">{currentQ.topic_name}</span>
-              </span>
-            </div>
-
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[var(--surface-sunk)] text-[var(--ink-faint)] border border-[var(--line)]">
-                {currentQ.difficulty}
-              </span>
-              {currentQ.is_pyq && (
-                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                  PYQ
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Question Content */}
-          <div className="text-[var(--ink)] text-sm md:text-[15px] leading-relaxed bg-[var(--surface-sunk)] p-4 rounded-xl border border-[var(--line)]">
-            <MathText text={currentQ.content} />
-          </div>
-
-          {/* MSQ Notice */}
-          {currentQ.question_type === "MSQ" && (
-            <div className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-purple-950/30 border border-purple-500/30 text-purple-300 text-xs font-semibold">
-              <AlertCircle className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-              <span>MSQ: One or more options can be correct. No partial credit.</span>
-            </div>
-          )}
-
-          {/* Options Interface */}
-          {currentQ.question_type === "NAT" ? (
-            <div className="p-4 rounded-xl bg-[var(--surface-sunk)] border border-[var(--line)] flex items-center gap-3">
-              <span className="text-xs font-mono font-bold text-[var(--ink-faint)] uppercase">Answer:</span>
-              <input
-                type="number"
-                step="any"
-                disabled={result !== null}
-                value={natAnswer}
-                onChange={(e) => setNatAnswer(e.target.value)}
-                placeholder="Enter value"
-                className="bg-[var(--surface-sunk)] border border-[var(--line)] text-[var(--ink)] font-mono text-base px-3.5 py-2 rounded-lg w-48 focus:outline-none focus:border-cyan-400 disabled:opacity-60"
-              />
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {currentQ.options?.map((opt) => {
-                const isSelected = selectedOptions.includes(opt.id);
-
-                return (
-                  <div
-                    key={opt.id}
-                    onClick={() => handleOptionToggle(opt.id)}
-                    className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all duration-150 ${
-                      isSelected
-                        ? "bg-[var(--accent)] border-cyan-400/80 text-[var(--ink)] shadow-md shadow-violet-600/10 ring-1 ring-cyan-400/50"
-                        : "bg-[var(--surface-sunk)] border-[var(--line)] text-[var(--ink-soft)] hover:border-[var(--line)] hover:bg-[var(--surface-sunk)]"
-                    } ${result !== null ? "pointer-events-none opacity-85" : ""}`}
-                  >
-                    <div
-                      className={`w-5 h-5 rounded flex items-center justify-center shrink-0 mt-0.5 text-xs font-bold font-mono transition ${
-                        isSelected
-                          ? "bg-cyan-400 text-black font-extrabold shadow-sm shadow-cyan-400/50"
-                          : "border border-[var(--line)] text-[var(--ink-faint)]"
-                      } ${currentQ.question_type === "MCQ" ? "rounded-full" : "rounded"}`}
-                    >
-                      {opt.id}
-                    </div>
-
-                    <div className="flex-1 text-xs sm:text-[13px]">
-                      <MathText text={opt.text} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Submit Action */}
-          {result === null ? (
-            <div className="flex justify-end pt-1">
-              <button
-                onClick={handleSubmit}
-                disabled={submitting}
-                className="px-5 py-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-[var(--ink)] text-xs font-bold transition shadow-md shadow-violet-600/25 disabled:opacity-50"
-              >
-                {submitting ? "Checking..." : "Submit Answer"}
-              </button>
-            </div>
-          ) : (
-            /* Result Banner */
-            <div className="space-y-3 pt-3 border-t border-[var(--line)]">
-              <div
-                className={`p-3.5 rounded-xl flex items-center justify-between gap-3 border ${
-                  result.is_correct
-                    ? "bg-emerald-950/20 border-emerald-500/40 text-emerald-200"
-                    : "bg-rose-950/20 border-rose-500/40 text-rose-200"
-                }`}
-              >
-                <div className="flex items-center gap-2.5">
-                  {result.is_correct ? (
-                    <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-                  ) : (
-                    <XCircle className="w-5 h-5 text-rose-400 shrink-0" />
-                  )}
-                  <div className="text-xs">
-                    <span className="font-bold">
-                      {result.is_correct ? "Correct" : "Incorrect"}
-                    </span>
-                    <span className="mx-2 text-[var(--ink-faint)]">|</span>
-                    <span className="font-mono font-bold">
-                      {result.marks_awarded > 0 ? `+${result.marks_awarded}` : result.marks_awarded}M
-                    </span>
-                    <span className="mx-2 text-[var(--ink-faint)]">|</span>
-                    <span>Key: <strong className="font-mono text-[var(--ink)]">{result.correct_answer}</strong></span>
-                  </div>
-                </div>
-
-                {currentIndex < questions.length - 1 && (
-                  <button
-                    onClick={handleNext}
-                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-[var(--ink)] text-xs font-bold transition"
-                  >
-                    Next
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-
-              {/* Step-by-Step KaTeX Explanation */}
-              <div className="p-4 rounded-xl bg-[var(--surface-sunk)] border border-[var(--line)] space-y-1.5">
-                <div className="flex items-center gap-1.5 text-[11px] font-mono font-bold text-[var(--ink)] uppercase">
-                  <BookOpen className="w-3.5 h-3.5" />
-                  <span>Explanation:</span>
-                </div>
-                <div className="text-xs sm:text-[13px] text-[var(--ink)] pt-1">
-                  <MathText text={result.explanation} />
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
+const TYPES = [
+  { value: "all", label: "All types" },
+  { value: "MCQ", label: "MCQ" },
+  { value: "MSQ", label: "MSQ" },
+  { value: "NAT", label: "NAT" },
+];
+const COUNTS = [5, 10, 15, 20, 30];
+const DURATIONS = [5, 10, 15, 20, 30, 45];
 
 export default function QuizPage() {
+  const router = useRouter();
+  const [patterns, setPatterns] = useState<ExamPatterns | null>(null);
+  const [syllabus, setSyllabus] = useState<SubjectItem[]>([]);
+  const [subject, setSubject] = useState("");
+  const [topic, setTopic] = useState("all");
+  const [type, setType] = useState("all");
+  const [count, setCount] = useState(10);
+  const [minutes, setMinutes] = useState(15);
+  const [starting, setStarting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([fetchExamPatterns(), fetchSyllabus()])
+      .then(([p, s]) => {
+        if (cancelled) return;
+        setPatterns(p);
+        setSyllabus(s);
+        const first = p.subjects.find((x) => x.question_count > 0);
+        if (first) setSubject(first.slug);
+      })
+      .catch(() => !cancelled && setError("Could not load quiz options."));
+    return () => { cancelled = true; };
+  }, []);
+
+  const available = useMemo(
+    () => (patterns?.subjects ?? []).filter((s) => s.question_count > 0),
+    [patterns],
+  );
+
+  const topics = useMemo(
+    () => syllabus.find((s) => s.slug === subject)?.topics ?? [],
+    [syllabus, subject],
+  );
+
+  const launch = async () => {
+    setStarting(true);
+    setError(null);
+    try {
+      const session = await startExam({
+        kind: "quiz",
+        pattern: topic === "all" ? "subject" : "topic",
+        subject_slug: subject,
+        topic_slug: topic === "all" ? undefined : topic,
+        question_type: type,
+        questions: count,
+        duration_minutes: minutes,
+      });
+      router.push(`/quiz/${session.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not start the quiz.");
+      setStarting(false);
+    }
+  };
+
+  const chip = (active: boolean) => ({
+    background: active ? "var(--accent)" : "var(--surface)",
+    border: "var(--line-width) solid var(--line)",
+    color: "var(--ink)",
+    boxShadow: active ? "var(--shadow-sm)" : "none",
+  });
+
   return (
-    <Suspense
-      fallback={
-        <div className="text-center py-20 text-[var(--ink-faint)] text-xs font-mono">
-          Loading drill...
+    <div className="space-y-5">
+      <header>
+        <h1 className="text-lg font-extrabold sm:text-xl" style={{ color: "var(--ink)" }}>
+          Quiz Drill
+        </h1>
+        <p className="text-[11px] font-semibold" style={{ color: "var(--ink-faint)" }}>
+          Short practice with the answer and explanation after each question.
+        </p>
+      </header>
+
+      {error && (
+        <p className="rounded-[var(--radius)] px-4 py-3 text-xs font-semibold"
+           style={{ background: "var(--danger)", color: "var(--ink)",
+                    border: "var(--line-width) solid var(--line)" }}>
+          {error}
+        </p>
+      )}
+
+      <section className="space-y-4 rounded-[var(--radius-lg)] p-4"
+               style={{ background: "var(--surface)",
+                        border: "var(--line-width) solid var(--line)",
+                        boxShadow: "var(--shadow-sm)" }}>
+        <div className="space-y-2">
+          <p className="text-[10px] font-extrabold uppercase tracking-wider"
+             style={{ color: "var(--ink-faint)" }}>Subject</p>
+          <div className="flex flex-wrap gap-2">
+            {available.map((s) => (
+              <button key={s.slug} type="button"
+                      onClick={() => { setSubject(s.slug); setTopic("all"); }}
+                      className="min-h-10 rounded-[var(--radius-pill)] px-3 text-[11px] font-bold"
+                      style={chip(subject === s.slug)}>
+                {s.name} <span style={{ color: "var(--ink-faint)" }}>({s.question_count})</span>
+              </button>
+            ))}
+          </div>
         </div>
-      }
-    >
-      <QuizDrill />
-    </Suspense>
+
+        {topics.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-[10px] font-extrabold uppercase tracking-wider"
+               style={{ color: "var(--ink-faint)" }}>Topic</p>
+            <select
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+              aria-label="Topic"
+              className="min-h-10 w-full rounded-[var(--radius-pill)] px-3 text-[11px] font-bold sm:w-auto"
+              style={chip(topic !== "all")}
+            >
+              <option value="all">Whole subject</option>
+              {topics.map((t) => (
+                <option key={t.slug} value={t.slug}>{t.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="space-y-2">
+            <p className="text-[10px] font-extrabold uppercase tracking-wider"
+               style={{ color: "var(--ink-faint)" }}>Question type</p>
+            <div className="flex flex-wrap gap-2">
+              {TYPES.map((t) => (
+                <button key={t.value} type="button" onClick={() => setType(t.value)}
+                        className="min-h-10 rounded-[var(--radius-pill)] px-3 text-[11px] font-bold"
+                        style={chip(type === t.value)}>{t.label}</button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-[10px] font-extrabold uppercase tracking-wider"
+               style={{ color: "var(--ink-faint)" }}>Questions</p>
+            <div className="flex flex-wrap gap-2">
+              {COUNTS.map((n) => (
+                <button key={n} type="button" onClick={() => setCount(n)}
+                        className="min-h-10 rounded-[var(--radius-pill)] px-3.5 text-[11px] font-bold"
+                        style={chip(count === n)}>{n}</button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-[10px] font-extrabold uppercase tracking-wider"
+               style={{ color: "var(--ink-faint)" }}>Minutes</p>
+            <div className="flex flex-wrap gap-2">
+              {DURATIONS.map((n) => (
+                <button key={n} type="button" onClick={() => setMinutes(n)}
+                        className="min-h-10 rounded-[var(--radius-pill)] px-3.5 text-[11px] font-bold"
+                        style={chip(minutes === n)}>{n}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={launch}
+          disabled={starting || !subject}
+          className="flex min-h-12 w-full items-center justify-center gap-2 rounded-[var(--radius-pill)] text-sm font-extrabold disabled:opacity-50 sm:w-auto sm:px-8"
+          style={{ background: "var(--accent)", color: "var(--ink)",
+                   border: "var(--line-width) solid var(--line)",
+                   boxShadow: "var(--shadow)" }}
+        >
+          <Play className="h-4 w-4" />
+          {starting ? "Preparing questions..." : "Start quiz"}
+        </button>
+
+        {patterns && (
+          <p className="flex items-center gap-1.5 text-[11px] font-semibold"
+             style={{ color: "var(--ink-faint)" }}>
+            <Target className="h-3.5 w-3.5" />
+            {patterns.total_questions_available} questions in the bank.
+          </p>
+        )}
+      </section>
+
+      <SessionHistory
+        kind="quiz"
+        subjects={available}
+        resultHref={(id) => `/quiz/${id}/result`}
+        resumeHref={(id) => `/quiz/${id}`}
+      />
+    </div>
   );
 }
