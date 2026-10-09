@@ -124,19 +124,106 @@ export interface FeedPage {
   total: number;
 }
 
+export interface FeedFilters {
+  subjectSlug?: string;
+  topicSlug?: string;
+  cardType?: string;
+  mode?: string;
+}
+
 export async function fetchFeed(
-  subjectSlug?: string,
-  cardType?: string,
+  filters: FeedFilters = {},
   offset = 0,
   limit = 18,
 ): Promise<FeedPage> {
   const params = new URLSearchParams();
-  if (subjectSlug && subjectSlug !== "all") params.append("subject_slug", subjectSlug);
-  if (cardType && cardType !== "all") params.append("card_type", cardType);
+  const add = (key: string, value?: string) => {
+    if (value && value !== "all") params.append(key, value);
+  };
+  add("subject_slug", filters.subjectSlug);
+  add("topic_slug", filters.topicSlug);
+  add("card_type", filters.cardType);
+  add("mode", filters.mode);
   params.append("offset", String(offset));
   params.append("limit", String(limit));
-  const res = await fetch(`${API_BASE}/api/feed?${params.toString()}`);
+
+  const res = await fetch(`${API_BASE}/api/feed?${params}`);
   if (!res.ok) throw new Error("Failed to fetch feed");
+  return res.json();
+}
+
+// ---- Rotation ----
+
+export async function markCardSeen(cardId: number): Promise<void> {
+  await fetch(`${API_BASE}/api/feed/cards/${cardId}/seen`, { method: "POST" });
+}
+
+export async function markCardRecalled(
+  cardId: number,
+): Promise<{ recall_count: number; mastered: boolean; due_at: string | null }> {
+  const res = await fetch(`${API_BASE}/api/feed/cards/${cardId}/recall`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error("Could not record that");
+  return res.json();
+}
+
+// ---- Assistant ----
+
+export type AssistantLanguage = "en" | "hi" | "hinglish";
+
+export interface AssistantFeedResult {
+  output: "feed";
+  filters: {
+    subject_slug: string | null;
+    topic: string | null;
+    level: string | null;
+    card_type: string | null;
+    query: string;
+  };
+  language: AssistantLanguage;
+}
+
+export interface AssistantChatResult {
+  output: "chat";
+  thread_id: number;
+  message_id: number;
+  answer: string;
+  citations: string[];
+  source_type: string;
+  language: AssistantLanguage;
+}
+
+export type AssistantResult = AssistantFeedResult | AssistantChatResult;
+
+export async function askAssistant(body: {
+  query: string;
+  thread_id?: number;
+  card_id?: number;
+  language?: AssistantLanguage;
+}): Promise<AssistantResult> {
+  const res = await fetch(`${API_BASE}/api/assistant/ask`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail ?? "Assistant unavailable");
+  return res.json();
+}
+
+export interface AssistantMessage {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  citations: string[];
+  created_at: string | null;
+}
+
+export async function fetchThread(
+  threadId: number,
+): Promise<{ id: number; title: string; messages: AssistantMessage[] }> {
+  const res = await fetch(`${API_BASE}/api/assistant/threads/${threadId}`);
+  if (!res.ok) throw new Error("Could not load that conversation");
   return res.json();
 }
 

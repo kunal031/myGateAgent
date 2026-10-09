@@ -3,8 +3,8 @@
 import React from "react";
 import Link from "next/link";
 import {
-  AlertTriangle, ArrowRight, Binary, Check, Lightbulb, Zap,
-  type LucideIcon,
+  AlertTriangle, ArrowRight, Binary, Check, Lightbulb,
+  MessageCircleQuestion, Zap, type LucideIcon,
 } from "lucide-react";
 
 import MathText from "@/components/MathText";
@@ -21,11 +21,15 @@ const TYPE_META: Record<string, { label: string; icon: LucideIcon }> = {
 interface Props {
   card: FeedCardItem;
   onMastered: (id: number) => void;
+  /** Opens the assistant with this card already in context. */
+  onExplain: (card: FeedCardItem) => void;
   /** True while the card plays its exit animation before removal. */
   leaving?: boolean;
 }
 
-export default function FeedCard({ card, onMastered, leaving = false }: Props) {
+export default function FeedCard({
+  card, onMastered, onExplain, leaving = false,
+}: Props) {
   const meta = TYPE_META[card.card_type] ?? TYPE_META.CONCEPT;
   const Icon = meta.icon;
   const v = variantFor(card);
@@ -123,6 +127,20 @@ export default function FeedCard({ card, onMastered, leaving = false }: Props) {
         >
           <Check className="h-3.5 w-3.5" />
           Got it
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onExplain(card)}
+          aria-label={`Explain ${card.title}`}
+          className="flex min-h-11 flex-1 items-center justify-center gap-1.5 text-[13px] font-bold"
+          style={{
+            color: "var(--ink)",
+            borderLeft: "var(--line-width) solid var(--line)",
+          }}
+        >
+          <MessageCircleQuestion className="h-3.5 w-3.5" />
+          Explain
         </button>
 
         <Link

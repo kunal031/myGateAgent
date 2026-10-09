@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { FeedCardItem, fetchFeed } from "@/lib/api";
+import { FeedCardItem, FeedFilters, fetchFeed } from "@/lib/api";
 
 export const PAGE_SIZE = 18; // 15-20 per batch; ~6-9 masonry rows
 
@@ -23,7 +23,10 @@ interface State {
  * newer list, and ids are de-duplicated because ranking can shift between
  * requests when a mistake is recorded mid-session.
  */
-export function useInfiniteFeed(subjectSlug: string, cardType: string) {
+export function useInfiniteFeed(filters: FeedFilters) {
+  // Serialised so the effect re-runs when any filter changes, without
+  // depending on object identity.
+  const key = JSON.stringify(filters);
   const [state, setState] = useState<State>({
     cards: [], loading: true, loadingMore: false,
     error: null, total: 0, hasMore: true,
@@ -49,7 +52,7 @@ export function useInfiniteFeed(subjectSlug: string, cardType: string) {
       }));
 
       try {
-        const page = await fetchFeed(subjectSlug, cardType, offset, PAGE_SIZE);
+        const page = await fetchFeed(filters, offset, PAGE_SIZE);
         if (token !== requestRef.current) return; // superseded
 
         offsetRef.current = page.next_offset ?? offset + page.items.length;
@@ -78,7 +81,8 @@ export function useInfiniteFeed(subjectSlug: string, cardType: string) {
         inFlight.current = false;
       }
     },
-    [subjectSlug, cardType],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [key],
   );
 
   useEffect(() => {
@@ -110,7 +114,7 @@ export function useInfiniteFeed(subjectSlug: string, cardType: string) {
       const token = requestRef.current;
 
       try {
-        const page = await fetchFeed(subjectSlug, cardType, offsetRef.current, 1);
+        const page = await fetchFeed(filters, offsetRef.current, 1);
         if (token !== requestRef.current) return;
         offsetRef.current = page.next_offset ?? offsetRef.current + page.items.length;
         setState((prev) => {
@@ -128,7 +132,8 @@ export function useInfiniteFeed(subjectSlug: string, cardType: string) {
         inFlight.current = false;
       }
     },
-    [subjectSlug, cardType, state.hasMore],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [key, state.hasMore],
   );
 
   return { ...state, loadMore, dismiss, refresh: () => load(true) };
