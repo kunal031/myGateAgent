@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useCallback, useContext, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
 
 export const THEMES = ["synapse", "light", "dark"] as const;
 export type Theme = (typeof THEMES)[number];
@@ -27,17 +27,20 @@ const ThemeContext = createContext<ThemeContextValue>({
 export const useTheme = () => useContext(ThemeContext);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  // The inline script in layout.tsx has already written the stored theme to
-  // <html> before paint, so the initialiser just reads it back. Doing this
-  // lazily (rather than in an effect) avoids a second render and keeps state
-  // in step with the DOM from the first frame.
-  const [theme, setThemeState] = useState<Theme>(() => {
-    if (typeof document === "undefined") return DEFAULT_THEME;
+  // Starts at the default on both server and client, so the markup matches
+  // and prerendering never reads the DOM. The inline script in layout.tsx
+  // has already applied the stored theme to <html> before paint, so there
+  // is no flash; this only brings React's state in line after hydration.
+  const [theme, setThemeState] = useState<Theme>(DEFAULT_THEME);
+
+  useEffect(() => {
     const current = document.documentElement.getAttribute("data-theme");
-    return current && THEMES.includes(current as Theme)
-      ? (current as Theme)
-      : DEFAULT_THEME;
-  });
+    if (current && THEMES.includes(current as Theme) && current !== theme) {
+      setThemeState(current as Theme);
+    }
+    // Runs once after hydration to sync with what the inline script applied.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const setTheme = useCallback((next: Theme) => {
     setThemeState(next);

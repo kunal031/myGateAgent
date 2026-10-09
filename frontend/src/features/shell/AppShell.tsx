@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { Suspense, useEffect, useState } from "react";
 
 import BottomNav from "./BottomNav";
 import Sidebar from "./Sidebar";
@@ -19,9 +19,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     };
   }, [drawerOpen]);
 
+  // Sidebar and BottomNav read usePathname(), which is only available at
+  // runtime. Each needs its own Suspense boundary, or it blocks prerendering
+  // of every dynamic route in the app.
   return (
     <div className="min-h-dvh overflow-x-hidden" style={{ background: "var(--canvas)" }}>
-      <Sidebar open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      <Suspense fallback={null}>
+        <Sidebar open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      </Suspense>
       <TopBar onMenu={() => setDrawerOpen(true)} />
 
       {/* pb-24 clears the mobile tab bar; md:pl-64 clears the sidebar. */}
@@ -34,7 +39,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </main>
 
-      <BottomNav />
+      <Suspense fallback={null}>
+        <BottomNav />
+      </Suspense>
     </div>
   );
 }
