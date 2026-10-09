@@ -41,6 +41,11 @@ export default function FeedPage() {
   const [mode, setMode] = useState("all");
   const [leaving, setLeaving] = useState<Set<number>>(new Set());
   const [threadId, setThreadId] = useState<number | null>(null);
+  // The card Explain was pressed on. Set before the request goes out so the
+  // modal can open at once showing the card, rather than after the answer
+  // lands several seconds later.
+  const [explainCard, setExplainCard] = useState<FeedCardItem | null>(null);
+  const [explainPending, setExplainPending] = useState(false);
   const [language, setLanguage] = useState<AssistantLanguage>("en");
 
   const filters: FeedFilters = useMemo(
@@ -87,6 +92,11 @@ export default function FeedPage() {
 
   const handleExplain = useCallback(
     async (card: FeedCardItem) => {
+      // Open first, answer second: the request takes seconds, and the
+      // student should see the modal respond to their click immediately.
+      setExplainCard(card);
+      setExplainPending(true);
+      setThreadId(null);
       try {
         const result = await askAssistant({
           query: `Explain this: ${card.title}`,
@@ -95,11 +105,21 @@ export default function FeedPage() {
         });
         if (result.output === "chat") setThreadId(result.thread_id);
       } catch {
-        // The bar surfaces assistant errors; a failed explain is silent.
+        // The modal stays open with the card showing, so a failure leaves
+        // the student somewhere they can retype the question rather than
+        // closing on them.
+      } finally {
+        setExplainPending(false);
       }
     },
     [language],
   );
+
+  const closeChat = useCallback(() => {
+    setThreadId(null);
+    setExplainCard(null);
+    setExplainPending(false);
+  }, []);
 
   const chip = (active: boolean) => ({
     background: active ? "var(--accent)" : "var(--surface)",
@@ -184,11 +204,13 @@ export default function FeedPage() {
         </div>
       </div>
 
-      {threadId !== null && (
+      {(threadId !== null || explainCard !== null) && (
         <ChatPanel
           threadId={threadId}
           language={language}
-          onClose={() => setThreadId(null)}
+          card={explainCard}
+          pending={explainPending}
+          onClose={closeChat}
         />
       )}
 
