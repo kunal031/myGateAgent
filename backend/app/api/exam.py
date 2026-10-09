@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..core.database import get_db
 from ..models.exams import ExamSession, ExamStatus
-from ..models.models import Subject
+from ..models.models import Subject, Topic
 from ..services.exam import patterns as pattern_defs
 from ..services.exam.session import (
     NotEnoughQuestions, create_session, save_answer, submit_session, visit_item,
@@ -19,12 +19,16 @@ router = APIRouter(prefix="/api/exam", tags=["Mock Test"])
 
 
 class StartRequest(BaseModel):
-    pattern: str = "full"                  # full, subject, custom
+    pattern: str = "full"                  # full, subject, custom, topic
     subject_slug: str | None = None
     subject_slugs: list[str] | None = None
+    topic_slug: str | None = None
+    question_type: str | None = None       # MCQ, MSQ, NAT, all
+    difficulty: str | None = None
     questions: int = 20
     duration_minutes: int = 45
     name: str | None = None
+    kind: str = "test"                     # test or quiz
 
 
 class AnswerRequest(BaseModel):
@@ -66,11 +70,23 @@ def list_patterns(db: Session = Depends(get_db)):
 
 @router.post("/start")
 def start_exam(payload: StartRequest, db: Session = Depends(get_db)):
-    """Assemble a paper and open a session."""
+    """Assemble a paper and open a session (quiz or test)."""
     subject_id = None
+    topic_id = None
 
     if payload.pattern == "full":
         pattern = pattern_defs.FULL_GATE
+    elif payload.pattern == "topic":
+        if not payload.topic_slug:
+            raise HTTPException(400, "topic_slug is required for a topic drill")
+        topic = db.query(Topic).filter(Topic.slug == payload.topic_slug).first()
+        if topic is None:
+            raise HTTPException(404, f"No topic {payload.topic_slug!r}")
+        topic_id = topic.id
+        subject_id = topic.subject_id
+        subject = db.query(Subject).filter(Subject.id == subject_id).first()
+        pattern = pattern_defs.topic_drill(
+            subject.slug, payload.questions, payload.duration_minutes)
     elif payload.pattern == "subject":
         if not payload.subject_slug:
             raise HTTPException(400, "subject_slug is required for a subject sprint")
@@ -86,7 +102,11 @@ def start_exam(payload: StartRequest, db: Session = Depends(get_db)):
             slugs, payload.questions, payload.duration_minutes)
 
     try:
-        session = create_session(db, pattern, name=payload.name, subject_id=subject_id)
+        session = create_session(
+            db, pattern, name=payload.name, subject_id=subject_id,
+            topic_id=topic_id, kind=payload.kind,
+            question_type=payload.question_type, difficulty=payload.difficulty,
+        )
     except NotEnoughQuestions as exc:
         raise HTTPException(409, str(exc)) from exc
 
@@ -193,14 +213,30 @@ def result(session_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("")
-def list_sessions(limit: int = Query(default=20, le=100),
-                  db: Session = Depends(get_db)):
-    """Performance history, newest first."""
-    sessions = (
-        db.query(ExamSession)
-        .order_by(ExamSession.started_at.desc())
-        .limit(limit).all()
-    )
+def list_sessions(
+    limit: int = Query(default=20, le=100),
+    kind: str | None = None,
+    subject_slug: str | None = None,
+    since: str | None = Query(default=None, description="ISO date, inclusive"),
+    db: Session = Depends(get_db),
+):
+    """Session history, newest first, filterable by kind, subject and date."""
+    query = db.query(ExamSession)
+
+    if kind in {"quiz", "test"}:
+        query = query.filter(ExamSession.kind == kind)
+    if subject_slug and subject_slug != "all":
+        subject = db.query(Subject).filter(Subject.slug == subject_slug).first()
+        if subject is None:
+            return []
+        query = query.filter(ExamSession.subject_id == subject.id)
+    if since:
+        try:
+            query = query.filter(ExamSession.started_at >= datetime.fromisoformat(since))
+        except ValueError:
+            raise HTTPException(400, "since must be an ISO date") from None
+
+    sessions = query.order_by(ExamSession.started_at.desc()).limit(limit).all()
     return [_session_summary(s) for s in sessions]
 
 
@@ -238,4 +274,42 @@ def _session_summary(session: ExamSession) -> dict:
         "unattempted_count": session.unattempted_count,
         "accuracy": session.accuracy,
         "shortfall_note": session.shortfall_note or "",
+    }
+
+
+@router.post("/{session_id}/check/{position}")
+def check_answer(session_id: int, position: int, db: Session = Depends(get_db)):
+    """Grade one question immediately. Quiz sessions only.
+
+    This is the difference between the two modes: a quiz gives feedback as
+    you go, so the explanation lands while the question is still in mind. A
+    test reveals nothing until submission, so this refuses for them.
+    """
+    from ..models.exams import ExamItem, SessionKind
+    from ..services.exam.scoring import score_item
+
+    session = _require_session(db, session_id)
+    if session.kind != SessionKind.QUIZ:
+        raise HTTPException(409, "Immediate feedback is only available in a quiz")
+
+    item = (
+        db.query(ExamItem)
+        .filter(ExamItem.session_id == session_id, ExamItem.position == position)
+        .first()
+    )
+    if item is None:
+        raise HTTPException(404, "No such question in this session")
+    if not item.user_answer:
+        raise HTTPException(409, "Answer the question first")
+
+    question = item.question
+    is_correct, marks = score_item(question, item.user_answer)
+
+    return {
+        "position": item.position,
+        "is_correct": is_correct,
+        "marks_obtained": marks,
+        "correct_answer": question.correct_answer,
+        "explanation": question.explanation,
+        "provenance": question.provenance or "",
     }

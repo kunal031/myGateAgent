@@ -17,7 +17,9 @@ class NotEnoughQuestions(RuntimeError):
 
 
 def _pick(db: Session, slugs: tuple[str, ...], marks: int, count: int,
-          exclude: set[int]) -> tuple[list[Question], int]:
+          exclude: set[int], *, topic_id: int | None = None,
+          question_type: str | None = None,
+          difficulty: str | None = None) -> tuple[list[Question], int]:
     """Pick `count` questions of a given mark value.
 
     Returns what was found and how many were short. A section the bank
@@ -29,25 +31,32 @@ def _pick(db: Session, slugs: tuple[str, ...], marks: int, count: int,
     if count <= 0:
         return [], 0
 
-    query = (
+    def scoped(base):
+        if slugs:
+            base = base.filter(Subject.slug.in_(slugs))
+        if topic_id is not None:
+            base = base.filter(Question.topic_id == topic_id)
+        if question_type and question_type != "all":
+            base = base.filter(Question.question_type == question_type)
+        if difficulty and difficulty != "all":
+            base = base.filter(Question.difficulty == difficulty)
+        return base
+
+    query = scoped(
         db.query(Question)
         .join(Subject, Question.subject_id == Subject.id)
         .filter(Question.marks == marks)
     )
-    if slugs:
-        query = query.filter(Subject.slug.in_(slugs))
     pool = [q for q in query.all() if q.id not in exclude]
 
     if len(pool) < count:
         # Fall back to the other mark value rather than failing the paper:
         # a slightly off mark split beats no test at all.
-        spare = (
+        spare = scoped(
             db.query(Question)
             .join(Subject, Question.subject_id == Subject.id)
             .filter(Question.marks != marks)
         )
-        if slugs:
-            spare = spare.filter(Subject.slug.in_(slugs))
         pool += [q for q in spare.all() if q.id not in exclude]
 
     random.shuffle(pool)
@@ -57,7 +66,11 @@ def _pick(db: Session, slugs: tuple[str, ...], marks: int, count: int,
 
 def create_session(db: Session, pattern: ExamPattern, *,
                    name: str | None = None,
-                   subject_id: int | None = None) -> ExamSession:
+                   subject_id: int | None = None,
+                   topic_id: int | None = None,
+                   kind: str = "test",
+                   question_type: str | None = None,
+                   difficulty: str | None = None) -> ExamSession:
     """Assemble a paper and open a session for it.
 
     The question set is fixed now and never re-drawn, so refreshing or
@@ -69,7 +82,9 @@ def create_session(db: Session, pattern: ExamPattern, *,
 
     for section in pattern.sections:
         for marks, count in ((1, section.one_mark), (2, section.two_mark)):
-            picked, short = _pick(db, section.subject_slugs, marks, count, used)
+            picked, short = _pick(db, section.subject_slugs, marks, count, used,
+                                  topic_id=topic_id, question_type=question_type,
+                                  difficulty=difficulty)
             used.update(q.id for q in picked)
             chosen.extend(picked)
             if short:
@@ -81,9 +96,11 @@ def create_session(db: Session, pattern: ExamPattern, *,
 
     session = ExamSession(
         name=name or pattern.name,
+        kind=kind,
         shortfall_note="; ".join(shortfalls),
         pattern=pattern.key,
         subject_id=subject_id,
+        topic_id=topic_id,
         total_questions=len(chosen),
         total_marks=float(sum(q.marks for q in chosen)),
         duration_minutes=pattern.duration_minutes,

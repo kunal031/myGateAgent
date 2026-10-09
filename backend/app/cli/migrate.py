@@ -28,6 +28,8 @@ ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("questions", "review_status", "VARCHAR(20) DEFAULT 'approved'"),
     ("questions", "origin", "VARCHAR(20) DEFAULT 'SEED'"),
     ("exam_sessions", "shortfall_note", "TEXT DEFAULT ''"),
+    ("exam_sessions", "kind", "VARCHAR(10) DEFAULT 'test'"),
+    ("exam_sessions", "topic_id", "INTEGER"),
 ]
 
 INDEXES: list[tuple[str, str]] = [
@@ -37,6 +39,7 @@ INDEXES: list[tuple[str, str]] = [
     ("ix_questions_concept_id", "questions(concept_id)"),
     ("ix_questions_exam_year", "questions(exam_year)"),
     ("ix_questions_origin", "questions(origin)"),
+    ("ix_exam_sessions_kind", "exam_sessions(kind)"),
 ]
 
 

@@ -15,7 +15,20 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 
 from ..core.database import Base
-from .models import Question, Subject  # noqa: F401  (register FK targets)
+from .models import Question, Subject, Topic  # noqa: F401  (register FK targets)
+
+
+class SessionKind:
+    """What a session is for.
+
+    A quiz drills a topic to build concepts and shows feedback as you go; a
+    test evaluates performance under exam conditions and reveals nothing
+    until submission. Both are the same record, so both get dated history,
+    a palette and per-question timing without a parallel implementation.
+    """
+
+    QUIZ = "quiz"
+    TEST = "test"
 
 
 class ExamStatus:
@@ -42,8 +55,10 @@ class ExamSession(Base):
     id = Column(Integer, primary_key=True, index=True)
 
     name = Column(String(200), default="Mock Test")
-    pattern = Column(String(30), default="full")   # full, subject, custom
+    kind = Column(String(10), default=SessionKind.TEST, index=True)
+    pattern = Column(String(30), default="full")   # full, subject, custom, topic
     subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=True)
+    topic_id = Column(Integer, ForeignKey("topics.id"), nullable=True)
 
     total_questions = Column(Integer, default=65)
     total_marks = Column(Float, default=100.0)

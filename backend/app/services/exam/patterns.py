@@ -69,6 +69,18 @@ def subject_sprint(subject_slug: str, questions: int, minutes: int) -> ExamPatte
     )
 
 
+def topic_drill(subject_slug: str, questions: int, minutes: int) -> ExamPattern:
+    """A quiz over one topic. Mark split follows the bank rather than a
+    fixed ratio, since a single topic may have mostly 1M or mostly 2M."""
+    two_mark = questions // 2
+    return ExamPattern(
+        key="topic",
+        name=f"Topic Drill ({questions}Q)",
+        duration_minutes=minutes,
+        sections=(SectionSpec((subject_slug,), questions - two_mark, two_mark),),
+    )
+
+
 def custom_mix(subject_slugs: list[str], questions: int, minutes: int) -> ExamPattern:
     """A mixed paper across chosen subjects."""
     two_mark = questions // 2
