@@ -69,6 +69,10 @@ def classify(path: Path, inbox_root: Path) -> dict:
     """Return the metadata for one file, without opening it."""
     rel = path.relative_to(inbox_root)
     rel_str = str(rel).lower()
+    # A textbook filename often carries its publication year, which must not
+    # be read as an exam year -- doing so classified Aho 2007 and
+    # Silberschatz 2019 as GATE papers.
+    in_books_folder = rel.parts[0] == "books" if rel.parts else False
     stem = path.stem.lower()
     suffix = path.suffix.lower()
 
@@ -84,7 +88,9 @@ def classify(path: Path, inbox_root: Path) -> dict:
         kind = SourceKind.PYQ_ANSWER_KEY
     elif rel_str.startswith("pyq/topicwise") or "topicwise" in stem:
         kind = SourceKind.PYQ_TOPICWISE
-    elif rel_str.startswith("pyq/") or detect_exam_year(path):
+    elif rel_str.startswith("pyq/") or (
+        detect_exam_year(path) and not in_books_folder
+    ):
         kind = SourceKind.PYQ_PAPER
     elif rel_str.startswith("notes/"):
         kind = SourceKind.HANDWRITTEN_NOTES
@@ -109,7 +115,8 @@ def classify(path: Path, inbox_root: Path) -> dict:
     return {
         "kind": kind,
         "subject_slug": detect_subject_slug(path),
-        "exam_year": detect_exam_year(path),
+        # Only meaningful for exam papers; a book's year is its edition.
+        "exam_year": None if in_books_folder else detect_exam_year(path),
         "author_credit": author,
         "origin": origin,
         "file_type": suffix.lstrip("."),
