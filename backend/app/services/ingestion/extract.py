@@ -98,13 +98,35 @@ def transcribe_page(page, content_hash: str, page_number: int) -> str:
     return text
 
 
+def file_has_text_layer(doc, *, samples: int = 5) -> bool:
+    """Whether the document's body carries a usable text layer.
+
+    Sampled from the body, because front matter -- cover, contents, preface
+    -- is often imaged even in a digital edition.
+    """
+    total = len(doc)
+    if total == 0:
+        return False
+    step = max(1, total // (samples + 1))
+    indexes = [min(total - 1, step * (i + 1)) for i in range(samples)]
+    usable = sum(1 for i in indexes if page_has_usable_text(doc[i]))
+    return usable >= max(1, len(indexes) // 2)
+
+
 def extract_pdf_pages(
     path: Path, content_hash: str, *, max_pages: int | None = None
 ) -> list[dict]:
-    """Return [{page_number, text, method}] for every page with content."""
+    """Return [{page_number, text, method}] for every page with content.
+
+    A document with a good text layer never falls back to vision. Its
+    occasional blank page is front matter or a full-page figure, and paying
+    six seconds of quota to transcribe a cover page is waste -- Cormen's
+    first forty pages alone would cost forty calls.
+    """
     pages: list[dict] = []
     doc = pymupdf.open(path)
     try:
+        has_text_layer = file_has_text_layer(doc)
         total = len(doc) if max_pages is None else min(len(doc), max_pages)
         for index in range(total):
             page = doc[index]
@@ -112,6 +134,8 @@ def extract_pdf_pages(
 
             if page_has_usable_text(page):
                 text, method = page.get_text("text").strip(), "DIRECT"
+            elif has_text_layer:
+                continue  # front matter or a figure; not worth a vision call
             else:
                 text, method = transcribe_page(page, content_hash, number), "VISION"
 
