@@ -39,6 +39,20 @@ class ExtractionMethod:
     PENDING = "PENDING"
 
 
+class IngestStatus:
+    """Where a file is in the pipeline.
+
+    Without this, a file being read and a file that failed look identical:
+    both show zero pages, because the Source row is written before
+    extraction starts. Telling them apart meant inspecting open file
+    handles.
+    """
+
+    EXTRACTING = "extracting"
+    COMPLETE = "complete"
+    FAILED = "failed"
+
+
 class Source(Base):
     """One ingested file, identified by content hash so re-drops are no-ops."""
 
@@ -64,6 +78,8 @@ class Source(Base):
     total_pages = Column(Integer, default=0)
     pages_extracted = Column(Integer, default=0)
     extraction_method = Column(String(20), default=ExtractionMethod.PENDING)
+    ingest_status = Column(String(20), default=IngestStatus.EXTRACTING, index=True)
+    ingest_error = Column(Text, default="")
     is_indexed = Column(Boolean, default=False)
 
     # Versioning: a newer edition supersedes rather than overwrites, so old

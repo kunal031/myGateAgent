@@ -30,6 +30,8 @@ ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("exam_sessions", "shortfall_note", "TEXT DEFAULT ''"),
     ("exam_sessions", "kind", "VARCHAR(10) DEFAULT 'test'"),
     ("exam_sessions", "topic_id", "INTEGER"),
+    ("sources", "ingest_status", "VARCHAR(20) DEFAULT 'complete'"),
+    ("sources", "ingest_error", "TEXT DEFAULT ''"),
 ]
 
 INDEXES: list[tuple[str, str]] = [
@@ -43,8 +45,28 @@ INDEXES: list[tuple[str, str]] = [
 ]
 
 
+def _tables(db) -> set[str]:
+    from sqlalchemy import inspect
+    from ..core.database import engine as bound_engine
+    return set(inspect(bound_engine).get_table_names())
+
+
 def existing_columns(db, table: str) -> set[str]:
-    return {row[1] for row in db.execute(text(f"PRAGMA table_info({table})"))}
+    """Columns on a table, on either backend.
+
+    SQLite answers with PRAGMA; Postgres rejects it outright, so the
+    portable information_schema query is used there.
+    """
+    from ..core.database import IS_SQLITE
+
+    if IS_SQLITE:
+        return {row[1] for row in db.execute(text(f"PRAGMA table_info({table})"))}
+    rows = db.execute(
+        text("SELECT column_name FROM information_schema.columns "
+             "WHERE table_name = :t"),
+        {"t": table},
+    )
+    return {row[0] for row in rows}
 
 
 def migrate() -> dict:
@@ -52,7 +74,11 @@ def migrate() -> dict:
     db = SessionLocal()
     added, skipped = [], []
     try:
+        existing_tables = _tables(db)
         for table, column, ddl in ADDITIVE_COLUMNS:
+            if table not in existing_tables:
+                skipped.append(f"{table}.{column} (no such table)")
+                continue
             if column in existing_columns(db, table):
                 skipped.append(f"{table}.{column}")
                 continue

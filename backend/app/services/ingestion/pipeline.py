@@ -11,7 +11,9 @@ from sqlalchemy.orm import Session
 
 from ...core.config import settings
 from ...models.models import Subject
-from ...models.sources import ExtractionMethod, Source, SourceChunk, SourceKind
+from ...models.sources import (
+    ExtractionMethod, IngestStatus, Source, SourceChunk, SourceKind,
+)
 import pymupdf
 
 from .chunker import chunk_page
@@ -103,6 +105,7 @@ def ingest_file(db: Session, path: Path, *, max_pages: int | None = None) -> dic
         if any(p["method"] == "VISION" for p in pages)
         else ExtractionMethod.DIRECT
     )
+    source.ingest_status = IngestStatus.COMPLETE
     source.is_indexed = True
     db.commit()
 
@@ -137,6 +140,23 @@ def needs_vision(path: Path, *, samples: int = 3) -> bool:
         return True
 
 
+def _mark_failed(db: Session, path: Path, exc: Exception) -> None:
+    """Record why a file failed, so it is distinguishable from one in flight."""
+    try:
+        source = (
+            db.query(Source)
+            .filter(Source.file_name == path.name)
+            .order_by(Source.id.desc())
+            .first()
+        )
+        if source is not None:
+            source.ingest_status = IngestStatus.FAILED
+            source.ingest_error = str(exc)[:500]
+            db.commit()
+    except Exception:
+        db.rollback()
+
+
 def ingest_inbox(
     db: Session, *, pattern: str = "**/*.pdf", max_files: int | None = None,
     max_pages: int | None = None, free_only: bool = False,
@@ -162,6 +182,7 @@ def ingest_inbox(
             # unusable, so without this one bad file fails every file after
             # it with a misleading "transaction has been rolled back".
             db.rollback()
+            _mark_failed(db, path, exc)
             logger.exception("Failed to ingest %s", path.name)
             reports.append({"status": "failed", "file": path.name, "error": str(exc)})
     return reports
