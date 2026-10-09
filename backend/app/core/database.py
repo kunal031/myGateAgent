@@ -1,11 +1,12 @@
 """Database engine and session factory.
 
-SQLite defaults to journal_mode=delete, which takes a whole-database lock
-for every write. Ingestion and generation both write while the API reads, so
-that default produced "database is locked" failures the moment two jobs ran
-together. WAL lets one writer proceed alongside readers, and a long
-busy_timeout makes the remaining writer-writer contention wait instead of
-failing.
+Supports SQLite and PostgreSQL from the same code. The backend is chosen by
+DATABASE_URL, so switching is a config change rather than a code change --
+which keeps a rollback cheap during the migration.
+
+SQLite needs WAL and a long busy timeout, because ingestion, generation and
+the API all write concurrently and its default journal takes a
+whole-database lock. Postgres needs none of that.
 """
 
 from sqlalchemy import create_engine, event
@@ -13,28 +14,34 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 from .config import settings
 
-engine = create_engine(
-    settings.DATABASE_URL,
-    connect_args={
-        "check_same_thread": False,
-        # Wait up to 30s for a lock rather than raising immediately. A vision
-        # transcription batch can hold a write open for a few seconds.
-        "timeout": 30.0,
-    },
-)
+IS_SQLITE = settings.DATABASE_URL.startswith("sqlite")
+
+if IS_SQLITE:
+    engine = create_engine(
+        settings.DATABASE_URL,
+        connect_args={"check_same_thread": False, "timeout": 30.0},
+    )
+else:
+    engine = create_engine(
+        settings.DATABASE_URL,
+        pool_size=5,
+        max_overflow=10,
+        # Recycle before Postgres' own idle timeout can close a pooled
+        # connection underneath a long-running ingest.
+        pool_pre_ping=True,
+        pool_recycle=1800,
+    )
 
 
-@event.listens_for(engine, "connect")
-def _configure_sqlite(dbapi_connection, _record):
-    cursor = dbapi_connection.cursor()
-    # WAL: readers never block the writer, and it survives restarts.
-    cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA busy_timeout=30000")
-    # NORMAL is the recommended durability level under WAL: safe against
-    # application crashes, and far fewer fsyncs than FULL.
-    cursor.execute("PRAGMA synchronous=NORMAL")
-    cursor.execute("PRAGMA foreign_keys=ON")
-    cursor.close()
+if IS_SQLITE:
+    @event.listens_for(engine, "connect")
+    def _configure_sqlite(dbapi_connection, _record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

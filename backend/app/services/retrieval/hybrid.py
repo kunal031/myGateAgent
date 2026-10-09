@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
+from ...core.database import IS_SQLITE
 from ...models.sources import Source, SourceChunk
 from . import keyword
 from .embeddings import embed_query
@@ -70,22 +71,34 @@ def search(
     pool = max(top_k * 4, 20)
     ranked_lists: list[list[int]] = []
 
-    kw = keyword.search(db, query, top_k=pool,
-                        subject_id=subject_id, topic_id=topic_id)
+    # Both halves come from whichever backend is configured. On Postgres
+    # that is tsvector and pgvector; on SQLite, FTS5 and the .npy store.
+    if IS_SQLITE:
+        kw = keyword.search(db, query, top_k=pool,
+                            subject_id=subject_id, topic_id=topic_id)
+    else:
+        from .pg_search import keyword_search
+        kw = keyword_search(db, query, top_k=pool,
+                            subject_id=subject_id, topic_id=topic_id)
     if kw:
         ranked_lists.append([cid for cid, _ in kw])
 
     if semantic:
-        store = store if store is not None else VectorStore.load()
-        if len(store):
-            try:
+        try:
+            if IS_SQLITE:
+                store = store if store is not None else VectorStore.load()
                 hits = store.search(
                     embed_query(query), top_k=pool,
                     subject_id=subject_id, topic_id=topic_id,
-                )
+                ) if len(store) else []
+            else:
+                from .pg_search import semantic_search
+                hits = semantic_search(db, query, top_k=pool,
+                                       subject_id=subject_id, topic_id=topic_id)
+            if hits:
                 ranked_lists.append([cid for cid, _ in hits])
-            except Exception as exc:  # quota, network: degrade to keyword only
-                logger.warning("Semantic search unavailable (%s); using keyword only", exc)
+        except Exception as exc:  # quota, network: degrade to keyword only
+            logger.warning("Semantic search unavailable (%s); using keyword only", exc)
 
     if not ranked_lists:
         return []

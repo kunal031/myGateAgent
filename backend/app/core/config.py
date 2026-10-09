@@ -18,7 +18,11 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "GateMaster API"
     VERSION: str = "1.0.0"
 
+    # SQLite by default; set to a postgresql+psycopg:// DSN to use Postgres.
     DATABASE_URL: str = f"sqlite:///{BASE_DIR}/gatemaster.db"
+
+    # Kept so the migration can read the old database while writing the new.
+    SQLITE_URL: str = f"sqlite:///{BASE_DIR}/gatemaster.db"
 
     # Browsers reject wildcard origins when credentials are allowed, so these
     # must be explicit.

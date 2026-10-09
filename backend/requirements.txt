@@ -10,6 +10,8 @@ python-multipart==0.0.32        # file uploads for /api/sources
 
 # ---- Database ----
 SQLAlchemy==2.1.3
+psycopg[binary]==3.3.6          # PostgreSQL driver
+pgvector==0.5.1                 # halfvec column + HNSW index
 
 # ---- AI (Gemini: vision OCR, generation, assistant, Search grounding) ----
 google-genai==2.29.0

@@ -12,7 +12,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 
-from ..core.database import Base
+from ..core.database import IS_SQLITE, Base
 # Subject and Topic must be registered on the same metadata before these
 # foreign keys can resolve. Importing them here means `from .sources import
 # Source` works standalone, rather than only after models.py was imported.
@@ -88,6 +88,23 @@ class Source(Base):
         return " - ".join(parts)
 
 
+def _embedding_column():
+    """The embedding, stored beside its chunk.
+
+    On Postgres this is a pgvector halfvec: half precision costs nothing
+    measurable (top-10 overlap was 10/10 against float32) and, unlike a
+    plain vector, it can carry an HNSW index above 2,000 dimensions --
+    pgvector rejects the index on vector(3072) outright.
+
+    On SQLite the column is unused; vectors live in data/vectors/ until the
+    migration completes.
+    """
+    if IS_SQLITE:
+        return Column(Text, nullable=True)
+    from pgvector.sqlalchemy import HALFVEC
+    return Column(HALFVEC(3072), nullable=True)
+
+
 class SourceChunk(Base):
     """A retrievable passage, anchored to the page it came from."""
 
@@ -107,6 +124,7 @@ class SourceChunk(Base):
 
     extraction_method = Column(String(20), default=ExtractionMethod.DIRECT)
     is_embedded = Column(Boolean, default=False)
+    embedding = _embedding_column()
     created_at = Column(DateTime, default=datetime.utcnow)
 
     source = relationship("Source", back_populates="chunks")
