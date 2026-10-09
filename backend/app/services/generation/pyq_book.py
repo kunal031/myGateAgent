@@ -38,6 +38,10 @@ _Q_HEADER = re.compile(
 
 _NAT_RANGE = re.compile(r"(-?\d+(?:\.\d+)?)\s*to\s*(-?\d+(?:\.\d+)?)", re.I)
 
+# A chapter's answer table follows its questions within a few pages: the
+# questions, then the key, then the solutions.
+MAX_TABLE_DISTANCE_PAGES = 30
+
 
 @dataclass
 class BookAnswer:
@@ -102,14 +106,24 @@ def parse_answer_tables(chunks: list[SourceChunk]) -> dict[int, dict[int, BookAn
 
 
 def parse_questions(chunks: list[SourceChunk]) -> list[BookQuestion]:
-    """Extract every question header with its stem text."""
+    """Extract every question header with its stem text.
+
+    Chunks overlap, so the same question appears more than once. The first
+    occurrence is kept, since it carries the fuller stem.
+    """
     found: list[BookQuestion] = []
+    seen: set[tuple[int, int, int]] = set()
     for chunk in chunks:
         matches = list(_Q_HEADER.finditer(chunk.content))
         for index, match in enumerate(matches):
             start = match.end()
             end = (matches[index + 1].start()
                    if index + 1 < len(matches) else len(chunk.content))
+            identity = (int(match.group("num")), int(match.group("year")),
+                        chunk.page_number)
+            if identity in seen:
+                continue
+            seen.add(identity)
             found.append(BookQuestion(
                 number=int(match.group("num")),
                 question_type=match.group("type").upper(),
@@ -137,11 +151,12 @@ def load_book_chunks(db: Session) -> tuple[Source | None, list[SourceChunk]]:
 
 @dataclass
 class Chapter:
-    """One chapter: its questions and the answer table that follows them."""
+    """One chapter: its questions, its answer table, and its solutions."""
     start_page: int
     end_page: int
     questions: list[BookQuestion] = field(default_factory=list)
     answers: dict[int, BookAnswer] = field(default_factory=dict)
+    answer_page: int | None = None
 
 
 def group_into_chapters(
@@ -170,15 +185,31 @@ def group_into_chapters(
         chapters.append(Chapter(current[0].page_number,
                                 current[-1].page_number, current))
 
-    # The answer table for a chapter is the first one at or after its last
-    # question page, and before the next chapter's questions begin.
-    table_pages = sorted(tables)
-    for index, chapter in enumerate(chapters):
-        next_start = (chapters[index + 1].start_page
-                      if index + 1 < len(chapters) else 10**6)
-        for page in table_pages:
-            if chapter.end_page <= page < next_start:
-                chapter.answers = tables[page]
+    # Match each chapter to its answer table by highest question number.
+    #
+    # Neither page order nor ordinal position works: there are more detected
+    # chapters than tables (a chapter split across a page break looks like
+    # two), and a chapter's table can be printed past the page where the next
+    # chapter's questions begin. The highest number in a chapter and in its
+    # table are the same value, which identifies the pair unambiguously, and
+    # requiring the table to come after the questions prevents matching a
+    # same-sized chapter earlier in the book.
+    unused = dict(tables)
+    for chapter in chapters:
+        if not chapter.questions:
+            continue
+        highest = max(q.number for q in chapter.questions)
+        for page in sorted(unused):
+            table = unused[page]
+            # A chapter's table is printed soon after its questions. Without
+            # this bound, a short chapter can match a same-sized table from
+            # a later chapter and inherit entirely wrong answers.
+            if page - chapter.end_page > MAX_TABLE_DISTANCE_PAGES:
+                break
+            if page >= chapter.end_page and max(table) == highest:
+                chapter.answer_page = page
+                chapter.answers = table
+                del unused[page]
                 break
 
     return chapters
@@ -207,3 +238,54 @@ def pair_questions_with_answers(chapters: list[Chapter]) -> list[BookQuestion]:
             question.answer = answer
             paired.append(question)
     return paired
+
+
+# A solution block starts "12. (a)" then runs until the next such marker.
+_SOLUTION_START = re.compile(
+    r"(?<!\d)(?P<num>\d{1,3})\.\s*\n?\s*\((?P<key>[a-dA-D](?:\s*,\s*[a-dA-D])*|[^)]{1,40}?)\)",
+)
+
+
+def parse_solutions(
+    chapters: list[Chapter], chunks: list[SourceChunk]
+) -> dict[tuple[int, int], str]:
+    """Extract worked solutions, keyed by (chapter index, question number).
+
+    Solutions are printed after the answer table and before the next
+    chapter, so the page range is known once tables are matched. They are
+    shown only when reviewing an attempt, never alongside the question.
+    """
+    by_page: dict[int, list[SourceChunk]] = {}
+    for chunk in chunks:
+        by_page.setdefault(chunk.page_number, []).append(chunk)
+
+    solutions: dict[tuple[int, int], str] = {}
+
+    for index, chapter in enumerate(chapters):
+        if chapter.answer_page is None:
+            continue
+        next_start = (chapters[index + 1].start_page
+                      if index + 1 < len(chapters) else 10**6)
+
+        text = "\n".join(
+            c.content
+            for page in range(chapter.answer_page + 1, next_start)
+            for c in by_page.get(page, [])
+        )
+        if not text.strip():
+            continue
+
+        markers = list(_SOLUTION_START.finditer(text))
+        for position, match in enumerate(markers):
+            number = int(match.group("num"))
+            if number not in chapter.answers:
+                continue
+            start = match.end()
+            end = (markers[position + 1].start()
+                   if position + 1 < len(markers) else len(text))
+            body = text[start:end].strip()
+            # Keep the fullest version: chunk overlap repeats some blocks.
+            if len(body) > len(solutions.get((index, number), "")):
+                solutions[(index, number)] = body
+
+    return solutions
