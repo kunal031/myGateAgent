@@ -190,3 +190,167 @@ export async function fetchAgentDocuments(): Promise<AgentDocumentsResponse> {
   if (!res.ok) throw new Error("Failed to fetch agent documents");
   return res.json();
 }
+
+// ---- Mock test ----
+
+export type ExamState =
+  | "not_visited"
+  | "not_answered"
+  | "answered"
+  | "marked"
+  | "answered_marked";
+
+export interface ExamQuestion {
+  position: number;
+  question_id: number;
+  question_type: "MCQ" | "MSQ" | "NAT";
+  marks: number;
+  negative_marks: number;
+  content: string;
+  options: QuestionOption[] | null;
+  subject_name: string;
+  state: ExamState;
+  user_answer: string;
+  time_spent_seconds: number;
+}
+
+export interface ExamSummary {
+  id: number;
+  name: string;
+  pattern: string;
+  status: "in_progress" | "submitted" | "abandoned";
+  total_questions: number;
+  total_marks: number;
+  duration_minutes: number;
+  started_at: string | null;
+  submitted_at: string | null;
+  elapsed_seconds: number;
+  remaining_seconds: number;
+  score: number;
+  max_score: number;
+  correct_count: number;
+  wrong_count: number;
+  unattempted_count: number;
+  accuracy: number;
+  shortfall_note: string;
+  questions?: ExamQuestion[];
+}
+
+export interface ExamResultRow extends ExamQuestion {
+  correct_answer: string;
+  is_correct: boolean | null;
+  marks_obtained: number;
+  has_worked_solution: boolean;
+}
+
+/** A submitted paper: same summary, but rows carry the outcome. */
+export type ExamResult = Omit<ExamSummary, "questions"> & {
+  questions: ExamResultRow[];
+};
+
+export interface ExamPatterns {
+  presets: {
+    key: string;
+    name: string;
+    total_questions: number;
+    total_marks: number;
+    duration_minutes: number;
+  }[];
+  subjects: {
+    slug: string;
+    name: string;
+    weightage_marks: number;
+    question_count: number;
+  }[];
+  total_questions_available: number;
+}
+
+export async function fetchExamPatterns(): Promise<ExamPatterns> {
+  const res = await fetch(`${API_BASE}/api/exam/patterns`);
+  if (!res.ok) throw new Error("Failed to load exam patterns");
+  return res.json();
+}
+
+export async function startExam(body: {
+  pattern: string;
+  subject_slug?: string;
+  subject_slugs?: string[];
+  questions?: number;
+  duration_minutes?: number;
+  name?: string;
+}): Promise<ExamSummary> {
+  const res = await fetch(`${API_BASE}/api/exam/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail ?? "Could not start test");
+  return res.json();
+}
+
+export async function fetchExam(id: number): Promise<ExamSummary> {
+  const res = await fetch(`${API_BASE}/api/exam/${id}`);
+  if (!res.ok) throw new Error("Failed to load test");
+  return res.json();
+}
+
+export async function visitExamQuestion(id: number, position: number) {
+  await fetch(`${API_BASE}/api/exam/${id}/visit/${position}`, { method: "POST" });
+}
+
+export async function saveExamAnswer(
+  id: number,
+  position: number,
+  body: { answer?: string; marked?: boolean; time_spent_seconds?: number },
+): Promise<{ position: number; state: ExamState; user_answer: string }> {
+  const res = await fetch(`${API_BASE}/api/exam/${id}/answer/${position}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error("Failed to save answer");
+  return res.json();
+}
+
+export async function submitExam(id: number): Promise<ExamSummary> {
+  const res = await fetch(`${API_BASE}/api/exam/${id}/submit`, { method: "POST" });
+  if (!res.ok) throw new Error("Failed to submit test");
+  return res.json();
+}
+
+export async function fetchExamResult(id: number): Promise<ExamResult> {
+  const res = await fetch(`${API_BASE}/api/exam/${id}/result`);
+  if (!res.ok) throw new Error("Failed to load result");
+  return res.json();
+}
+
+export async function fetchExamHistory(limit = 20): Promise<ExamSummary[]> {
+  const res = await fetch(`${API_BASE}/api/exam?limit=${limit}`);
+  if (!res.ok) throw new Error("Failed to load history");
+  return res.json();
+}
+
+export interface SolutionResponse {
+  question_id: number;
+  question_type: string;
+  correct_answer: string;
+  solution: string;
+  has_worked_solution: boolean;
+  source: string;
+  exam_year: number | null;
+  provenance: string;
+  attempts: {
+    user_answer: string;
+    is_correct: boolean;
+    marks_obtained: number;
+    time_spent_seconds: number;
+    mode: string;
+    attempted_at: string | null;
+  }[];
+}
+
+export async function fetchSolution(questionId: number): Promise<SolutionResponse> {
+  const res = await fetch(`${API_BASE}/api/quiz/${questionId}/solution`);
+  if (!res.ok) throw new Error((await res.json()).detail ?? "Solution unavailable");
+  return res.json();
+}

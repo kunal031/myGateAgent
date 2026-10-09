@@ -1,190 +1,271 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { 
-  Award, 
-  Settings2, 
-  Play, 
-  Layers, 
-  Timer
-} from "lucide-react";
-import { fetchSyllabus, SubjectItem } from "@/lib/api";
+import { useRouter } from "next/navigation";
+import { Award, History, Layers, Play, Settings2 } from "lucide-react";
+
+import {
+  ExamPatterns, ExamSummary, fetchExamHistory, fetchExamPatterns, startExam,
+} from "@/lib/api";
+import { formatClock } from "@/features/exam/palette";
+
+type Mode = "full" | "subject" | "custom";
+
+const MODES: { key: Mode; title: string; blurb: string; icon: typeof Award }[] = [
+  { key: "full", title: "Full mock", blurb: "Whole syllabus, exam pattern", icon: Award },
+  { key: "subject", title: "Subject test", blurb: "One subject in depth", icon: Layers },
+  { key: "custom", title: "Custom mix", blurb: "Pick subjects and length", icon: Settings2 },
+];
+
+const COUNTS = [10, 20, 30, 50];
+const DURATIONS = [15, 30, 45, 60, 90, 180];
 
 export default function TestPage() {
-  const [subjects, setSubjects] = useState<SubjectItem[]>([]);
-  const [selectedMode, setSelectedMode] = useState<"full" | "subject" | "custom">("full");
-  
-  const [customSubject, setCustomSubject] = useState<string>("all");
-  const [questionCount, setQuestionCount] = useState<number>(20);
-  const [durationMinutes, setDurationMinutes] = useState<number>(45);
+  const router = useRouter();
+  const [patterns, setPatterns] = useState<ExamPatterns | null>(null);
+  const [history, setHistory] = useState<ExamSummary[]>([]);
+  const [mode, setMode] = useState<Mode>("full");
+  const [subject, setSubject] = useState("");
+  const [picked, setPicked] = useState<string[]>([]);
+  const [count, setCount] = useState(20);
+  const [minutes, setMinutes] = useState(45);
+  const [starting, setStarting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchSyllabus().then(setSubjects).catch(console.error);
+    let cancelled = false;
+    fetchExamPatterns()
+      .then((data) => {
+        if (cancelled) return;
+        setPatterns(data);
+        const first = data.subjects.find((s) => s.question_count > 0);
+        if (first) setSubject(first.slug);
+      })
+      .catch(() => !cancelled && setError("Could not load test patterns."));
+    fetchExamHistory(10).then((h) => !cancelled && setHistory(h)).catch(() => {});
+    return () => { cancelled = true; };
   }, []);
 
+  const fullPreset = patterns?.presets.find((p) => p.key === "full");
+
+  // Only offer subjects that actually have questions.
+  const available = useMemo(
+    () => (patterns?.subjects ?? []).filter((s) => s.question_count > 0),
+    [patterns],
+  );
+
+  const launch = async () => {
+    setStarting(true);
+    setError(null);
+    try {
+      const session = await startExam({
+        pattern: mode,
+        subject_slug: mode === "subject" ? subject : undefined,
+        subject_slugs: mode === "custom"
+          ? (picked.length ? picked : available.map((s) => s.slug))
+          : undefined,
+        questions: count,
+        duration_minutes: mode === "full" ? 180 : minutes,
+      });
+      router.push(`/test/${session.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not start the test.");
+      setStarting(false);
+    }
+  };
+
+  const chip = (active: boolean) => ({
+    background: active ? "var(--accent)" : "var(--surface)",
+    border: "var(--line-width) solid var(--line)",
+    color: "var(--ink)",
+    boxShadow: active ? "var(--shadow-sm)" : "none",
+  });
+
   return (
-    <div className="max-w-4xl mx-auto space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between pb-2 border-b border-[var(--line)]">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-[var(--accent)] border border-[var(--line)] flex items-center justify-center text-[var(--ink)]">
-            <Timer className="w-4 h-4" />
-          </div>
-          <div>
-            <h1 className="text-xl font-black tracking-tight text-[var(--ink)] flex items-center gap-2">
-              Mock Test Engine
-              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-[var(--accent)] text-[var(--ink)] border border-[var(--line)]">
-                100 Marks
-              </span>
-            </h1>
-          </div>
-        </div>
+    <div className="space-y-5">
+      <header>
+        <h1 className="text-lg font-extrabold sm:text-xl" style={{ color: "var(--ink)" }}>
+          Mock Test
+        </h1>
+        <p className="text-[11px] font-semibold" style={{ color: "var(--ink-faint)" }}>
+          Full-length, subject or topic tests under exam conditions.
+          {patterns && ` ${patterns.total_questions_available} questions available.`}
+        </p>
+      </header>
 
-        <div className="text-[11px] font-mono font-bold text-[var(--ink-soft)] bg-[var(--surface)] px-3 py-1.5 rounded-xl border border-[var(--line)]">
-          MCQ: <span className="text-rose-400">-0.33/-0.66</span> · MSQ/NAT: <span className="text-emerald-400">0 -ve</span>
-        </div>
-      </div>
+      {error && (
+        <p className="rounded-[var(--radius)] px-4 py-3 text-xs font-semibold"
+           style={{ background: "var(--danger)", color: "var(--ink)",
+                    border: "var(--line-width) solid var(--line)" }}>
+          {error}
+        </p>
+      )}
 
-      {/* Mode Select Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        {/* Full Mock */}
-        <div
-          onClick={() => setSelectedMode("full")}
-          className={`p-4 rounded-xl border cursor-pointer transition-all ${
-            selectedMode === "full"
-              ? "bg-[var(--surface-muted)] border-cyan-400 shadow-md shadow-cyan-400/10 ring-1 ring-cyan-400/40"
-              : "bg-[var(--surface)] border-[var(--line)] hover:border-[var(--line)]"
-          }`}
-        >
-          <div className="flex items-center justify-between mb-2">
-            <Award className="w-5 h-5 text-[var(--ink)]" />
-            <span className="text-[10px] font-mono font-bold text-[var(--ink-faint)]">180 MINS</span>
-          </div>
-          <h3 className="font-extrabold text-sm text-[var(--ink)]">Full Exam Mock</h3>
-          <p className="text-xs text-[var(--ink-faint)] font-mono mt-0.5">65 Qs · 100 Marks</p>
-        </div>
-
-        {/* Subject Sprint */}
-        <div
-          onClick={() => setSelectedMode("subject")}
-          className={`p-4 rounded-xl border cursor-pointer transition-all ${
-            selectedMode === "subject"
-              ? "bg-[var(--surface-muted)] border-cyan-400 shadow-md shadow-cyan-400/10 ring-1 ring-cyan-400/40"
-              : "bg-[var(--surface)] border-[var(--line)] hover:border-[var(--line)]"
-          }`}
-        >
-          <div className="flex items-center justify-between mb-2">
-            <Layers className="w-5 h-5 text-violet-400" />
-            <span className="text-[10px] font-mono font-bold text-[var(--ink-faint)]">45 MINS</span>
-          </div>
-          <h3 className="font-extrabold text-sm text-[var(--ink)]">Subject Sprint</h3>
-          <p className="text-xs text-[var(--ink-faint)] font-mono mt-0.5">Single Subject Drill</p>
-        </div>
-
-        {/* Custom Mix */}
-        <div
-          onClick={() => setSelectedMode("custom")}
-          className={`p-4 rounded-xl border cursor-pointer transition-all ${
-            selectedMode === "custom"
-              ? "bg-[var(--surface-muted)] border-cyan-400 shadow-md shadow-cyan-400/10 ring-1 ring-cyan-400/40"
-              : "bg-[var(--surface)] border-[var(--line)] hover:border-[var(--line)]"
-          }`}
-        >
-          <div className="flex items-center justify-between mb-2">
-            <Settings2 className="w-5 h-5 text-amber-400" />
-            <span className="text-[10px] font-mono font-bold text-[var(--ink-faint)]">CUSTOM</span>
-          </div>
-          <h3 className="font-extrabold text-sm text-[var(--ink)]">Custom Drill</h3>
-          <p className="text-xs text-[var(--ink-faint)] font-mono mt-0.5">Flexible Qs & Timer</p>
-        </div>
-      </div>
-
-      {/* Config Bar */}
-      <div className="p-4 rounded-xl bg-[var(--surface)] border border-[var(--line)] space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="space-y-1">
-            <label className="text-[10px] font-mono font-bold text-[var(--ink-faint)] uppercase">
-              Subject
-            </label>
-            <select
-              disabled={selectedMode === "full"}
-              value={customSubject}
-              onChange={(e) => setCustomSubject(e.target.value)}
-              className="w-full bg-[var(--surface-sunk)] border border-[var(--line)] text-[var(--ink)] text-xs rounded-lg p-2.5 focus:outline-none focus:border-cyan-400 disabled:opacity-50"
+      <section className="grid gap-3 sm:grid-cols-3">
+        {MODES.map((option) => {
+          const Icon = option.icon;
+          const active = mode === option.key;
+          return (
+            <button
+              key={option.key}
+              type="button"
+              onClick={() => setMode(option.key)}
+              className="rounded-[var(--radius-lg)] p-4 text-left"
+              style={{
+                background: active ? "var(--accent)" : "var(--surface)",
+                border: `${active ? "3px" : "var(--line-width)"} solid var(--line)`,
+                boxShadow: active ? "var(--shadow)" : "var(--shadow-sm)",
+              }}
             >
-              {selectedMode === "full" ? (
-                <option value="all">All 12 Subjects</option>
-              ) : (
-                <>
-                  <option value="all">All Subjects (Mixed)</option>
-                  {subjects.map((sub) => (
-                    <option key={sub.slug} value={sub.slug}>
-                      {sub.name}
-                    </option>
-                  ))}
-                </>
-              )}
-            </select>
-          </div>
+              <Icon className="mb-2 h-5 w-5" style={{ color: "var(--ink)" }} />
+              <h2 className="text-sm font-extrabold" style={{ color: "var(--ink)" }}>
+                {option.title}
+              </h2>
+              <p className="text-[11px] font-semibold" style={{ color: "var(--ink-faint)" }}>
+                {option.blurb}
+              </p>
+            </button>
+          );
+        })}
+      </section>
 
-          <div className="space-y-1">
-            <label className="text-[10px] font-mono font-bold text-[var(--ink-faint)] uppercase">
-              Questions
-            </label>
-            <select
-              disabled={selectedMode === "full"}
-              value={selectedMode === "full" ? 65 : questionCount}
-              onChange={(e) => setQuestionCount(Number(e.target.value))}
-              className="w-full bg-[var(--surface-sunk)] border border-[var(--line)] text-[var(--ink)] text-xs rounded-lg p-2.5 focus:outline-none focus:border-cyan-400 disabled:opacity-50"
-            >
-              {selectedMode === "full" ? (
-                <option value={65}>65 Questions</option>
-              ) : (
-                <>
-                  <option value={10}>10 Questions</option>
-                  <option value={20}>20 Questions</option>
-                  <option value={30}>30 Questions</option>
-                  <option value={50}>50 Questions</option>
-                </>
-              )}
-            </select>
-          </div>
+      <section className="space-y-4 rounded-[var(--radius-lg)] p-4"
+               style={{ background: "var(--surface)",
+                        border: "var(--line-width) solid var(--line)",
+                        boxShadow: "var(--shadow-sm)" }}>
+        {mode === "full" && fullPreset && (
+          <p className="text-xs font-semibold" style={{ color: "var(--ink-soft)" }}>
+            {fullPreset.total_questions} questions · {fullPreset.total_marks} marks ·{" "}
+            {fullPreset.duration_minutes} minutes, following the real GATE pattern.
+          </p>
+        )}
 
-          <div className="space-y-1">
-            <label className="text-[10px] font-mono font-bold text-[var(--ink-faint)] uppercase">
-              Time
-            </label>
-            <select
-              disabled={selectedMode === "full"}
-              value={selectedMode === "full" ? 180 : durationMinutes}
-              onChange={(e) => setDurationMinutes(Number(e.target.value))}
-              className="w-full bg-[var(--surface-sunk)] border border-[var(--line)] text-[var(--ink)] text-xs rounded-lg p-2.5 focus:outline-none focus:border-cyan-400 disabled:opacity-50"
-            >
-              {selectedMode === "full" ? (
-                <option value={180}>180 Minutes (3 Hours)</option>
-              ) : (
-                <>
-                  <option value={20}>20 Minutes</option>
-                  <option value={45}>45 Minutes</option>
-                  <option value={60}>60 Minutes</option>
-                  <option value={90}>90 Minutes</option>
-                </>
-              )}
-            </select>
+        {mode === "subject" && (
+          <div className="space-y-2">
+            <p className="text-[10px] font-extrabold uppercase tracking-wider"
+               style={{ color: "var(--ink-faint)" }}>Subject</p>
+            <div className="flex flex-wrap gap-2">
+              {available.map((s) => (
+                <button key={s.slug} type="button" onClick={() => setSubject(s.slug)}
+                        className="min-h-10 rounded-[var(--radius-pill)] px-3 text-[11px] font-bold"
+                        style={chip(subject === s.slug)}>
+                  {s.name} <span style={{ color: "var(--ink-faint)" }}>({s.question_count})</span>
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
-        <div className="flex justify-end pt-2 border-t border-[var(--line)]">
-          <Link
-            href={`/quiz?subject=${customSubject}&limit=${selectedMode === "full" ? 65 : questionCount}`}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-[var(--ink)] font-bold text-xs transition shadow-md shadow-violet-600/25"
-          >
-            <Play className="w-3.5 h-3.5 fill-white" />
-            Launch Test
-          </Link>
-        </div>
-      </div>
+        {mode === "custom" && (
+          <div className="space-y-2">
+            <p className="text-[10px] font-extrabold uppercase tracking-wider"
+               style={{ color: "var(--ink-faint)" }}>
+              Subjects {picked.length === 0 && "(none selected = all)"}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {available.map((s) => (
+                <button key={s.slug} type="button"
+                        onClick={() => setPicked((prev) =>
+                          prev.includes(s.slug)
+                            ? prev.filter((p) => p !== s.slug)
+                            : [...prev, s.slug])}
+                        className="min-h-10 rounded-[var(--radius-pill)] px-3 text-[11px] font-bold"
+                        style={chip(picked.includes(s.slug))}>
+                  {s.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {mode !== "full" && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-2">
+              <p className="text-[10px] font-extrabold uppercase tracking-wider"
+                 style={{ color: "var(--ink-faint)" }}>Questions</p>
+              <div className="flex flex-wrap gap-2">
+                {COUNTS.map((n) => (
+                  <button key={n} type="button" onClick={() => setCount(n)}
+                          className="min-h-10 rounded-[var(--radius-pill)] px-3.5 text-[11px] font-bold"
+                          style={chip(count === n)}>{n}</button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <p className="text-[10px] font-extrabold uppercase tracking-wider"
+                 style={{ color: "var(--ink-faint)" }}>Minutes</p>
+              <div className="flex flex-wrap gap-2">
+                {DURATIONS.map((n) => (
+                  <button key={n} type="button" onClick={() => setMinutes(n)}
+                          className="min-h-10 rounded-[var(--radius-pill)] px-3.5 text-[11px] font-bold"
+                          style={chip(minutes === n)}>{n}</button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={launch}
+          disabled={starting || !patterns}
+          className="flex min-h-12 w-full items-center justify-center gap-2 rounded-[var(--radius-pill)] text-sm font-extrabold disabled:opacity-50 sm:w-auto sm:px-8"
+          style={{ background: "var(--accent)", color: "var(--ink)",
+                   border: "var(--line-width) solid var(--line)",
+                   boxShadow: "var(--shadow)" }}
+        >
+          <Play className="h-4 w-4" />
+          {starting ? "Preparing paper..." : "Start test"}
+        </button>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="flex items-center gap-2 text-sm font-extrabold"
+            style={{ color: "var(--ink)" }}>
+          <History className="h-4 w-4" />
+          Performance history
+        </h2>
+
+        {history.length === 0 ? (
+          <p className="rounded-[var(--radius)] px-4 py-6 text-center text-xs font-semibold"
+             style={{ background: "var(--surface)", color: "var(--ink-faint)",
+                      border: "var(--line-width) solid var(--line)" }}>
+            No tests yet. Your scores will appear here.
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {history.map((h) => (
+              <li key={h.id}>
+                <Link
+                  href={h.status === "submitted" ? `/test/${h.id}/result` : `/test/${h.id}`}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-[var(--radius)] px-3 py-2.5"
+                  style={{ background: "var(--surface)",
+                           border: "var(--line-width) solid var(--line)" }}
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-xs font-bold" style={{ color: "var(--ink)" }}>
+                      {h.name}
+                    </span>
+                    <span className="text-[10px] font-semibold" style={{ color: "var(--ink-faint)" }}>
+                      {h.started_at?.slice(0, 16).replace("T", " ")} ·{" "}
+                      {h.status === "submitted"
+                        ? `${h.correct_count}✓ ${h.wrong_count}✗ ${h.unattempted_count}– · ${formatClock(h.elapsed_seconds)}`
+                        : "in progress"}
+                    </span>
+                  </span>
+                  <span className="rounded-[var(--radius-pill)] px-3 py-1 text-xs font-extrabold"
+                        style={{ background: h.status === "submitted" ? "var(--success)" : "var(--warning)",
+                                 border: "var(--line-width) solid var(--line)",
+                                 color: "var(--ink)" }}>
+                    {h.status === "submitted" ? `${h.score}/${h.max_score}` : "Resume"}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }
