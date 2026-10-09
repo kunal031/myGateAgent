@@ -20,12 +20,22 @@ ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("feed_cards", "provenance", "TEXT DEFAULT ''"),
     ("feed_cards", "source_chunk_ids", "VARCHAR(200) DEFAULT ''"),
     ("feed_cards", "review_status", "VARCHAR(20) DEFAULT 'approved'"),
+    # Questions carry the same provenance guarantees as cards.
+    ("questions", "concept_id", "INTEGER"),
+    ("questions", "exam_year", "INTEGER"),
+    ("questions", "provenance", "TEXT DEFAULT ''"),
+    ("questions", "source_chunk_ids", "VARCHAR(200) DEFAULT ''"),
+    ("questions", "review_status", "VARCHAR(20) DEFAULT 'approved'"),
+    ("questions", "origin", "VARCHAR(20) DEFAULT 'SEED'"),
 ]
 
 INDEXES: list[tuple[str, str]] = [
     ("ix_feed_cards_concept_id", "feed_cards(concept_id)"),
     ("ix_feed_cards_mode", "feed_cards(mode)"),
     ("ix_feed_cards_review_status", "feed_cards(review_status)"),
+    ("ix_questions_concept_id", "questions(concept_id)"),
+    ("ix_questions_exam_year", "questions(exam_year)"),
+    ("ix_questions_origin", "questions(origin)"),
 ]
 
 

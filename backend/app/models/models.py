@@ -48,6 +48,19 @@ class Question(Base):
     nat_min = Column(Float, nullable=True)
     nat_max = Column(Float, nullable=True)
     
+    # Ordered study unit this question drills. Nullable for seed questions.
+    concept_id = Column(Integer, ForeignKey("concepts.id"), nullable=True, index=True)
+
+    # Where the question came from: PYQ (extracted from a real paper),
+    # GENERATED (written from the student's notes), WEB (sourced online),
+    # or SEED (hand-authored).
+    origin = Column(String(20), default="SEED", index=True)
+    exam_year = Column(Integer, nullable=True, index=True)
+
+    provenance = Column(Text, default="")
+    source_chunk_ids = Column(String(200), default="")
+    review_status = Column(String(20), default="approved", index=True)
+
     explanation = Column(Text, nullable=False)
     difficulty = Column(String(20), default="Standard GATE")  # Foundational, Standard GATE, Rank Booster
     source = Column(String(100), default="GATE CSE")
