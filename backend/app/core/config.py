@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     # the feed stayed thin.
     GEMINI_INGEST_MAX_PER_DAY: int = 20000
     GEMINI_GENERATE_MAX_PER_DAY: int = 20000
+    # Interactive asks are few but must never wait on a batch run.
+    GEMINI_INTERACTIVE_MAX_PER_DAY: int = 5000
 
     # Kept for compatibility; the two budgets above supersede it.
     GEMINI_MAX_REQUESTS_PER_DAY: int = 20000

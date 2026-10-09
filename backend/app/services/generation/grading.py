@@ -98,6 +98,7 @@ def _as_float(value, default: float = 0.0) -> float:
 
 def grade_context(
     context: str, *, concept: str, topic: str, subject: str, level: str,
+    interactive: bool = False,
 ) -> ContextGrade:
     """Judge retrieved material before generating from it.
 
@@ -115,6 +116,7 @@ def grade_context(
             system_instruction=prompts.GRADE_CONTEXT_SYSTEM,
             response_mime_type="application/json",
             temperature=0.0,
+            interactive=interactive,
         )
         data = _as_mapping(parse_json_response(raw))
     except Exception as exc:

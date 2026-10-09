@@ -19,7 +19,8 @@ from tenacity import (
 from ..core.config import settings
 from . import models
 from .rate_limit import (
-    DailyQuotaExceeded, generation_limiter, ingest_limiter, search_limiter,
+    DailyQuotaExceeded, generation_limiter, ingest_limiter,
+    interactive_limiter, search_limiter,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,9 +63,15 @@ def generate_text(
     response_mime_type: Optional[str] = None,
     response_schema: Any = None,
     temperature: float = 0.2,
+    interactive: bool = False,
 ) -> str:
-    """Plain text or structured JSON generation."""
-    generation_limiter.acquire()
+    """Plain text or structured JSON generation.
+
+    `interactive=True` draws on a separate budget, so a request someone is
+    waiting on does not queue behind a batch run holding the shared bucket.
+    """
+    limiter = interactive_limiter if interactive else generation_limiter
+    limiter.acquire()
 
     config = types.GenerateContentConfig(
         temperature=temperature,

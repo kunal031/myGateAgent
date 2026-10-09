@@ -87,3 +87,13 @@ search_limiter = RateLimiter(
     max_per_day=settings.GEMINI_SEARCH_MAX_PER_DAY,
     state_name="search",
 )
+
+# The student waiting on an answer must never queue behind a batch run.
+# Card generation and the assistant shared generation_limiter, so an Explain
+# issued while generate_all was working took 41s instead of 10 -- the extra
+# time was spent entirely in the token bucket, not in the model.
+interactive_limiter = RateLimiter(
+    max_rpm=settings.GEMINI_MAX_RPM,
+    max_per_day=settings.GEMINI_INTERACTIVE_MAX_PER_DAY,
+    state_name="interactive",
+)

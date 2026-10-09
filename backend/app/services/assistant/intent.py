@@ -65,6 +65,7 @@ def parse_intent(db: Session, query: str) -> Intent:
             system_instruction=prompts.INTENT_SYSTEM,
             response_mime_type="application/json",
             temperature=0.0,
+            interactive=True,
         )
         data = parse_json_response(raw)
     except Exception as exc:
