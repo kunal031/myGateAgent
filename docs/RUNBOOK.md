@@ -78,12 +78,45 @@ Zero cards means the corpus is thin on that topic, not that the job failed.
 # apply new columns after a model change
 ./venv/bin/python -m app.cli.migrate
 
-# rewrite seed content from app/data/ (keeps attempts and mistakes)
+# rewrite seeded questions from app/data/ (keeps attempts and mistakes;
+# feed cards are left alone -- they are generated and carry provenance)
 ./venv/bin/python -m app.cli.reseed
 
-# remove the placeholder cards used to exercise the feed layout
+# remove layout placeholder cards, if any were made to test the masonry grid
 ./venv/bin/python -m app.cli.clear_placeholders
 ```
+
+---
+
+## Push the corpus to Aiven
+
+Local Postgres is the working copy; Aiven is the deployment copy. Refresh it
+with:
+
+```bash
+./venv/bin/python -m app.cli.migrate_to_postgres \
+    --from-local --to-aiven --replace --dry-run   # always check first
+./venv/bin/python -m app.cli.migrate_to_postgres \
+    --from-local --to-aiven --replace
+```
+
+**`--from-local` is not optional.** Without it the source is the SQLite
+file, which is a pre-ingestion backup frozen at 2,590 chunks -- running it
+by accident replaces the full corpus with that snapshot, and the only
+symptom is a cloud copy that quietly has less in it.
+
+`--replace` truncates the target's tables first, so run the dry run and read
+the row counts before committing to it. Columns the target lacks are added
+before anything is copied, which is deliberate: `create_all` never alters an
+existing table, so a target seeded before a column was added stays behind
+until something reconciles it, and reconciling after a truncate would leave
+the target empty on failure.
+
+Vectors are carried from the source's `halfvec` column, not from
+`data/vectors/chunks.npy` -- that store is stale as well.
+
+Do this after a generation run finishes rather than during one, so the copy
+is a consistent snapshot.
 
 ---
 
