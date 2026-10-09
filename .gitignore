@@ -43,6 +43,9 @@ backend/data/*.log
 # POST /api/agent/index/build
 backend/data/vectors/
 
+# Database dumps: ~180 MB each, and reproducible from the database itself.
+backend/data/backups/
+
 # ---- OS / editor ----
 .DS_Store
 *.swp

@@ -88,6 +88,39 @@ Zero cards means the corpus is thin on that topic, not that the job failed.
 
 ---
 
+## Where the data lives, and keeping it
+
+Three copies, and they are not equivalent:
+
+| Copy | Role | Risk |
+|---|---|---|
+| **Local Postgres** | the working copy; `DB_TARGET=local`, everything is written here | one disk |
+| **Aiven** | deployment copy, pushed from local | **free tier expires after 30 days** |
+| **`data/backups/*.dump`** | cold copy on disk | only as good as the last dump |
+
+The app never writes to Aiven directly, so local is always the source of
+truth and pushing to the cloud cannot lose local work. The corpus is
+expensive to rebuild -- thousands of vision OCR pages and 13k embeddings,
+all paid for with API quota -- so it is worth a dump before anything
+destructive and on a regular cadence.
+
+```bash
+./venv/bin/python -m app.cli.backup              # dump local Postgres
+./venv/bin/python -m app.cli.backup --from-aiven # dump the cloud copy
+./venv/bin/python -m app.cli.backup --list
+./venv/bin/python -m app.cli.backup --restore gatemaster-local-<stamp>.dump
+```
+
+Dumps are custom-format and compressed (~180 MB at the current corpus
+size), the newest 7 are kept, and `data/backups/` is gitignored. Embeddings
+are included, so a restore does not mean re-embedding.
+
+**When the Aiven trial ends**, nothing is lost: local Postgres already holds
+everything. Point `POSTGRESQL_AIVEN_URI` at the replacement and re-run the
+push below.
+
+---
+
 ## Push the corpus to Aiven
 
 Local Postgres is the working copy; Aiven is the deployment copy. Refresh it
