@@ -8,6 +8,6 @@ is present, whichever model a caller actually needs.
 """
 
 from . import models  # noqa: F401  (base tables first)
-from . import assistant, concepts, exams, sources, syllabus  # noqa: F401
+from . import assistant, concepts, exams, rotation, sources, syllabus  # noqa: F401
 
-__all__ = ["models", "concepts", "exams", "sources", "syllabus", "assistant"]
+__all__ = ["models", "concepts", "exams", "sources", "syllabus", "assistant", "rotation"]
