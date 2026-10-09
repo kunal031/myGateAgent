@@ -4,7 +4,7 @@ from ..models.models import Subject, Topic, Question, FeedCard
 from ..models.sources import Source, SourceChunk  # noqa: F401  (register tables)
 from ..models.concepts import Concept, ConceptProgress  # noqa: F401
 from ..data.syllabus import SYLLABUS_DATA
-from ..data.seeds import SEED_FEED_CARDS, SEED_QUESTIONS
+from ..data.seeds import SEED_QUESTIONS
 
 def init_database():
     Base.metadata.create_all(bind=engine)
@@ -43,23 +43,10 @@ def init_database():
 
             db.commit()
 
-            # Seed Feed Cards
-            print("Seeding initial feed cards...")
-            for fc in SEED_FEED_CARDS:
-                sub_id = subject_map.get(fc["subject_slug"])
-                top_id = topic_map.get(f"{fc['subject_slug']}:{fc['topic_slug']}")
-                if sub_id and top_id:
-                    card = FeedCard(
-                        subject_id=sub_id,
-                        topic_id=top_id,
-                        card_type=fc["card_type"],
-                        title=fc["title"],
-                        content=fc["content"],
-                        takeaway=fc["takeaway"],
-                        difficulty=fc["difficulty"],
-                        base_weight=fc.get("base_weight", 1)
-                    )
-                    db.add(card)
+            # Feed cards are not seeded. Every card must carry a source
+            # reference back to ingested material, and hand-written demo
+            # cards have none -- they would be the only unsourced content in
+            # the feed. Cards come from the generation pipeline instead.
 
             # Seed Questions
             print("Seeding initial GATE questions...")

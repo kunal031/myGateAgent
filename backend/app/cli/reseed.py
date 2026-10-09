@@ -14,7 +14,7 @@ import argparse
 
 from ..core.database import SessionLocal, engine, Base
 from ..models.models import FeedCard, Question, Subject, Topic
-from ..data.seeds import SEED_FEED_CARDS, SEED_QUESTIONS
+from ..data.seeds import SEED_QUESTIONS
 
 
 def _lookup_maps(db):
@@ -30,7 +30,7 @@ def _lookup_maps(db):
 def reseed_content(dry_run: bool = False) -> dict:
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
-    counts = {"feed_cards": 0, "questions": 0, "skipped": 0}
+    counts = {"questions": 0, "skipped": 0}
 
     try:
         subject_map, topic_map = _lookup_maps(db)
@@ -40,32 +40,15 @@ def reseed_content(dry_run: bool = False) -> dict:
             )
 
         if dry_run:
-            print(f"[dry-run] would replace "
-                  f"{db.query(FeedCard).count()} feed cards and "
-                  f"{db.query(Question).count()} questions")
+            print(f"[dry-run] would update "
+                  f"{db.query(Question).count()} questions; "
+                  f"{db.query(FeedCard).count()} feed cards left untouched")
             return counts
 
-        # Questions first: FeedCard has no FK to Question, but attempts
-        # reference questions, so preserve ids by updating in place where possible.
-        db.query(FeedCard).delete()
-
-        for fc in SEED_FEED_CARDS:
-            sub_id = subject_map.get(fc["subject_slug"])
-            top_id = topic_map.get(f"{fc['subject_slug']}:{fc['topic_slug']}")
-            if not (sub_id and top_id):
-                counts["skipped"] += 1
-                continue
-            db.add(FeedCard(
-                subject_id=sub_id,
-                topic_id=top_id,
-                card_type=fc["card_type"],
-                title=fc["title"],
-                content=fc["content"],
-                takeaway=fc["takeaway"],
-                difficulty=fc["difficulty"],
-                base_weight=fc.get("base_weight", 1),
-            ))
-            counts["feed_cards"] += 1
+        # Feed cards are deliberately left alone: they are generated from
+        # ingested sources and carry provenance, so there is nothing in
+        # SEED_FEED_CARDS worth restoring over them. Deleting them here
+        # would discard the whole generated feed.
 
         # Update question text in place so existing attempts stay valid.
         for q in SEED_QUESTIONS:
@@ -122,8 +105,7 @@ def main() -> None:
 
     counts = reseed_content(dry_run=args.dry_run)
     if not args.dry_run:
-        print(f"Reseeded {counts['feed_cards']} feed cards, "
-              f"{counts['questions']} questions "
+        print(f"Reseeded {counts['questions']} questions "
               f"({counts['skipped']} skipped: unknown subject/topic slug)")
 
 
