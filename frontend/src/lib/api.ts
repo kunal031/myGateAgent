@@ -263,13 +263,31 @@ export async function fetchStats(): Promise<StatsSummary> {
 }
 
 export async function chatWithAgent(query: string, subjectSlug?: string): Promise<AgentChatResponse> {
-  const res = await fetch(`${API_BASE}/api/agent/chat`, {
+  // /api/agent/chat was never built; the assistant lives at /api/assistant/ask.
+  // Its reply is reshaped here so callers of this function stay unchanged.
+  const res = await fetch(`${API_BASE}/api/assistant/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query, subject_slug: subjectSlug }),
   });
-  if (!res.ok) throw new Error("Failed to chat with agent");
-  return res.json();
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(
+      `Assistant request failed (${res.status})${detail ? `: ${detail.slice(0, 200)}` : ""}`,
+    );
+  }
+  const data = await res.json();
+  return {
+    reply: data.answer ?? "",
+    source: data.source_type ?? "knowledge_base",
+    // The assistant cites sources as strings; the panel wants excerpt
+    // objects, so each citation becomes a header-only excerpt.
+    matched_excerpts: (data.citations ?? []).map((c: string) => ({
+      content: "",
+      file_name: c,
+      page_number: 0,
+    })),
+  };
 }
 
 export async function fetchAgentDocuments(): Promise<AgentDocumentsResponse> {
