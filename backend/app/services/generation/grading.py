@@ -67,6 +67,28 @@ class CardVerdict:
         )
 
 
+def _as_mapping(data) -> dict:
+    """Coerce a parsed JSON reply to a mapping.
+
+    The model is asked for an object and usually sends one, but it sometimes
+    wraps it in a single-element list. Unwrapping that recovers a real
+    verdict; anything else becomes an empty dict so the caller falls back to
+    its documented defaults rather than raising AttributeError on .get().
+
+    Raising here is the worst outcome available: both callers sit inside a
+    broad except in cards.py, so a malformed reply would abandon the whole
+    topic -- and for check_card it would skip verification on cards that
+    were never actually checked.
+    """
+    if isinstance(data, dict):
+        return data
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict):
+                return item
+    return {}
+
+
 def _as_float(value, default: float = 0.0) -> float:
     try:
         return max(0.0, min(1.0, float(value)))
@@ -94,7 +116,7 @@ def grade_context(
             response_mime_type="application/json",
             temperature=0.0,
         )
-        data = parse_json_response(raw)
+        data = _as_mapping(parse_json_response(raw))
     except Exception as exc:
         logger.warning("Context grading failed (%s); proceeding ungraded", exc)
         return ContextGrade(1.0, 1.0, 1.0, "use")
@@ -133,7 +155,7 @@ def check_card(
             response_mime_type="application/json",
             temperature=0.0,
         )
-        data = parse_json_response(raw)
+        data = _as_mapping(parse_json_response(raw))
     except Exception as exc:
         logger.warning("Card check failed (%s); accepting unchecked", exc)
         return CardVerdict(True, True, True, True, "accept")
