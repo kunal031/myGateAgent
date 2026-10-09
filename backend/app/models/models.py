@@ -94,6 +94,10 @@ class FeedCard(Base):
     source_chunk_ids = Column(String(200), default="")
     review_status = Column(String(20), default="approved", index=True)
 
+    # knowledge_base, web, or hybrid -- so a card sourced online is
+    # distinguishable from one taken from the student's own books.
+    source_type = Column(String(20), default="knowledge_base", index=True)
+
     card_type = Column(String(20), default="CONCEPT")  # TRAP, FORMULA, CONCEPT, SHORTCUT
     title = Column(String(200), nullable=False)
     content = Column(Text, nullable=False)

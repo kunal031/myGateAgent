@@ -15,6 +15,8 @@ from ...ai.prompts import cards as prompts
 from ...models.concepts import Concept, StudyMode
 from ...models.models import FeedCard, Subject, Topic
 from ...services.retrieval.hybrid import search
+from .corrective import recover
+from .grading import check_card, grade_context
 from .grounding import (
     InsufficientContext, build_context, is_supported, parse_json_response,
 )
@@ -65,7 +67,35 @@ def generate_cards_for_concept(
         top_k=8,
         subject_id=concept.subject_id,
     )
-    context = build_context(matches)  # raises InsufficientContext
+
+    level = getattr(concept, "level", "core")
+    source_type = "knowledge_base"
+
+    # Grade before writing: retrieval that merely mentions the concept
+    # produces a card that reads plausibly and teaches nothing.
+    try:
+        context = build_context(matches)
+        grade = grade_context(context.text, concept=concept.name,
+                              topic=topic.name, subject=subject.name,
+                              level=level)
+    except InsufficientContext:
+        context, grade = None, None
+
+    if context is None or not grade.usable:
+        # Corrective stage: re-query, widen, then the web.
+        recovery = recover(
+            db, concept=concept.name, topic=topic.name, subject=subject.name,
+            subject_id=concept.subject_id, level=level,
+        )
+        if not recovery.succeeded:
+            logger.info("No usable material for %s (tried %s)",
+                        concept.name, ", ".join(recovery.attempts))
+            raise InsufficientContext(
+                f"No source covers {concept.name!r} after "
+                f"{len(recovery.attempts)} attempts"
+            )
+        context = recovery.context
+        source_type = recovery.source_type
 
     raw = ai_client.generate_text(
         template.format(
@@ -104,6 +134,20 @@ def generate_cards_for_concept(
             logger.warning("Rejected ungrounded card %r on %s", title, concept.name)
             continue
 
+        # Self-check: the quote test above catches a fabricated citation,
+        # this catches a card that is accurate but teaches nothing, or is
+        # pitched at the wrong level.
+        verdict = check_card(
+            {"card_type": item.get("card_type", ""), "title": title,
+             "content": content, "takeaway": takeaway},
+            context.text, concept=concept.name, level=level, mode=mode,
+        )
+        if not verdict.accepted:
+            rejected += 1
+            logger.info("Rejected card %r on %s: %s",
+                        title, concept.name, verdict.reason)
+            continue
+
         citation, chunk_ids = context.cite(item.get("source_number"))
 
         card_type = (item.get("card_type") or "CONCEPT").upper()
@@ -127,6 +171,7 @@ def generate_cards_for_concept(
             provenance=citation[:2000],
             source_chunk_ids=chunk_ids[:200],
             review_status="pending",
+            source_type=source_type,
         )
         db.add(card)
         created.append(card)

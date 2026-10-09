@@ -32,6 +32,7 @@ ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("exam_sessions", "topic_id", "INTEGER"),
     ("sources", "ingest_status", "VARCHAR(20) DEFAULT 'complete'"),
     ("sources", "ingest_error", "TEXT DEFAULT ''"),
+    ("feed_cards", "source_type", "VARCHAR(20) DEFAULT 'knowledge_base'"),
 ]
 
 INDEXES: list[tuple[str, str]] = [
