@@ -43,6 +43,14 @@ Vectors live **on the chunk row** rather than in a parallel file, so a chunk
 and its embedding can never drift apart — a failure mode the `.npy` store
 had to guard against explicitly.
 
+The schema removes that risk only once every writer uses it. The indexer
+kept writing to `.npy` and setting `is_embedded` long after the column
+existed, so 10,763 chunks were flagged embedded with no vector and semantic
+search silently served the 2,590 rows copied during the migration. Two
+lessons, both now enforced in `index.py`: a writer must branch on
+`IS_SQLITE` like the read path does, and resume state must be derived from
+the vector itself, never from a boolean that can outlive it.
+
 ---
 
 ## Index choice
@@ -89,6 +97,14 @@ kept, no Matryoshka truncation needed, and the index works.
 
 Steps 1–4 are reversible. Step 7 is a config change, not a code change,
 which keeps a rollback cheap.
+
+**Status (2026-10-09)**: steps 1–7 complete against local Postgres. All
+13,353 chunks carry a `halfvec(3072)` embedding, HNSW and GIN indexes are
+in place, and retrieval runs through `pg_search`. The SQLite file remains as
+a pre-ingestion backup and is deliberately stale at 2,590 chunks — it is no
+longer a fallback, so do not reason about corpus size from it. Aiven is
+likewise still at the 2,590-row snapshot; re-syncing it needs
+`migrate_to_postgres` to read from local Postgres rather than SQLite.
 
 ---
 
