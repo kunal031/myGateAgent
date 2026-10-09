@@ -41,11 +41,13 @@ STAGES: list[tuple[str, str, bool]] = [
 ]
 
 
-def run_stage(db, label: str, pattern: str, max_pages: int | None) -> dict:
+def run_stage(db, label: str, pattern: str, max_pages: int | None,
+              free_only: bool = False) -> dict:
     print(f"\n=== {label} ===")
     totals = {"files": 0, "pages": 0, "chunks": 0}
     try:
-        for report in ingest_inbox(db, pattern=pattern, max_pages=max_pages):
+        for report in ingest_inbox(db, pattern=pattern, max_pages=max_pages,
+                                   free_only=free_only):
             if report["status"] == "ingested":
                 print(f"  {report['file']}: {report['pages']}p, {report['chunks']} chunks")
                 totals["files"] += 1
@@ -75,10 +77,13 @@ def main() -> None:
               f"{generation_limiter.remaining_today()}")
 
         for label, pattern, needs_vision in STAGES:
-            if args.free_only and needs_vision:
+            # --free-only now filters per file as well as per stage: a
+            # textbook stage holds both digital editions and scans.
+            if args.free_only and needs_vision and "books" not in pattern:
                 continue
             try:
-                stage = run_stage(db, label, pattern, args.max_pages)
+                stage = run_stage(db, label, pattern, args.max_pages,
+                                  free_only=args.free_only)
             except DailyQuotaExceeded:
                 print("\nDaily quota reached. Re-run tomorrow to continue; "
                       "pages already transcribed are cached.")

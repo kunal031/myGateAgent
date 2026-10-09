@@ -12,9 +12,11 @@ from sqlalchemy.orm import Session
 from ...core.config import settings
 from ...models.models import Subject
 from ...models.sources import ExtractionMethod, Source, SourceChunk, SourceKind
+import pymupdf
+
 from .chunker import chunk_page
 from .classify import classify
-from .extract import extract_pdf_pages, file_hash
+from .extract import extract_pdf_pages, file_hash, page_has_usable_text
 
 logger = logging.getLogger(__name__)
 
@@ -113,16 +115,44 @@ def ingest_file(db: Session, path: Path, *, max_pages: int | None = None) -> dic
     }
 
 
+def needs_vision(path: Path, *, samples: int = 3) -> bool:
+    """Whether a file's text layer is unusable and it must go to vision.
+
+    Checked per file, not per stage: a stage can hold both a digital
+    edition and a scan, and sending the scan first spends hours of quota
+    while free books wait behind it.
+    """
+    if path.suffix.lower() != ".pdf":
+        return False
+    try:
+        doc = pymupdf.open(path)
+        total = len(doc)
+        if total == 0:
+            return True
+        indexes = [total // 4, total // 2, (3 * total) // 4][:samples]
+        usable = sum(1 for i in indexes if page_has_usable_text(doc[i]))
+        doc.close()
+        return usable < max(1, len(indexes) - 1)
+    except Exception:
+        return True
+
+
 def ingest_inbox(
     db: Session, *, pattern: str = "**/*.pdf", max_files: int | None = None,
-    max_pages: int | None = None,
+    max_pages: int | None = None, free_only: bool = False,
 ) -> list[dict]:
-    """Ingest matching files from the inbox, newest-smallest first.
+    """Ingest matching files from the inbox.
 
-    Smallest first is deliberate: a short file validates the pipeline for a
-    handful of API calls before a 600-page book commits hours of quota.
+    Ordered free-extraction first, then smallest first. Both matter: a file
+    with a usable text layer costs no quota at all, and among the rest a
+    short file proves the pipeline before a long one commits hours of it.
     """
-    files = sorted(settings.INBOX_DIR.glob(pattern), key=lambda p: p.stat().st_size)
+    candidates = sorted(settings.INBOX_DIR.glob(pattern),
+                        key=lambda p: p.stat().st_size)
+    annotated = [(needs_vision(p), p) for p in candidates]
+    if free_only:
+        annotated = [(v, p) for v, p in annotated if not v]
+    files = [p for _, p in sorted(annotated, key=lambda t: t[0])]
     reports = []
     for path in files[:max_files] if max_files else files:
         try:
