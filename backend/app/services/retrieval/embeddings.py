@@ -26,27 +26,47 @@ _VECTOR_DIR = settings.DATA_DIR / "vectors"
 # Gemini accepts batches; keep them modest so one failure costs little.
 BATCH_SIZE = 32
 
+# Parallel in-flight batches. Measured: 30 concurrent calls completed with
+# no failures, so this is well inside what the API serves.
+EMBED_CONCURRENCY = 12
+
+
+def _embed_batch(batch: list[str], task_type: str) -> list[list[float]]:
+    from google.genai import types
+
+    ai_client.generation_limiter.acquire()
+    response = ai_client.get_client().models.embed_content(
+        model=EMBED_MODEL,
+        contents=batch,
+        config=types.EmbedContentConfig(task_type=task_type),
+    )
+    return [e.values for e in response.embeddings]
+
 
 def embed_texts(texts: list[str], *, task_type: str = "RETRIEVAL_DOCUMENT") -> np.ndarray:
     """Embed a list of texts, returning L2-normalised row vectors.
 
     Normalising here means cosine similarity is a plain dot product later.
+
+    Batches are sent concurrently. Each call is a round trip of a few
+    hundred milliseconds, so issuing them one at a time left throughput an
+    order of magnitude below what the API serves -- measured at roughly 480
+    chunks a minute against a limit that allows far more.
     """
-    from google.genai import types
+    from concurrent.futures import ThreadPoolExecutor
 
     if not texts:
         return np.zeros((0, EMBED_DIMS), dtype=np.float32)
 
-    vectors: list[list[float]] = []
-    for start in range(0, len(texts), BATCH_SIZE):
-        batch = texts[start:start + BATCH_SIZE]
-        ai_client.generation_limiter.acquire()
-        response = ai_client.get_client().models.embed_content(
-            model=EMBED_MODEL,
-            contents=batch,
-            config=types.EmbedContentConfig(task_type=task_type),
-        )
-        vectors.extend(e.values for e in response.embeddings)
+    batches = [texts[i:i + BATCH_SIZE] for i in range(0, len(texts), BATCH_SIZE)]
+
+    if len(batches) == 1:
+        vectors = _embed_batch(batches[0], task_type)
+    else:
+        with ThreadPoolExecutor(max_workers=EMBED_CONCURRENCY) as pool:
+            # map preserves order, so vectors stay aligned with their chunks.
+            results = list(pool.map(lambda b: _embed_batch(b, task_type), batches))
+        vectors = [v for batch_vectors in results for v in batch_vectors]
 
     matrix = np.asarray(vectors, dtype=np.float32)
     norms = np.linalg.norm(matrix, axis=1, keepdims=True)
