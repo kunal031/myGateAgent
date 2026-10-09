@@ -47,10 +47,23 @@ class Settings(BaseSettings):
     GEMINI_MODEL_PRIMARY: str = "gemini-3.8-flash"
     GEMINI_MODEL_LIGHT: str = "gemini-3.5-flash-lite"
 
-    # Free-tier rails for the ingestion batch job; raise on a paid tier.
-    GEMINI_MAX_RPM: int = 10
-    GEMINI_MAX_REQUESTS_PER_DAY: int = 1400
-    GEMINI_SEARCH_MAX_PER_DAY: int = 450
+    # Rate rails. Defaults suit a paid tier; lower them for the free tier,
+    # where the limits are roughly 10 RPM and 1,500 requests/day.
+    #
+    # Measured on this key: 30 parallel calls completed in 2.5s with no
+    # failures, about 726 req/min, so 10 RPM was leaving ~98% of the
+    # available throughput unused.
+    GEMINI_MAX_RPM: int = 300
+    GEMINI_SEARCH_MAX_PER_DAY: int = 1000
+
+    # Separate budgets, so a long vision run cannot starve card generation.
+    # They shared one counter, and 60% of a day went to reading books while
+    # the feed stayed thin.
+    GEMINI_INGEST_MAX_PER_DAY: int = 20000
+    GEMINI_GENERATE_MAX_PER_DAY: int = 20000
+
+    # Kept for compatibility; the two budgets above supersede it.
+    GEMINI_MAX_REQUESTS_PER_DAY: int = 20000
 
     # ---- Paths ----
     DATA_DIR: Path = BASE_DIR / "data"

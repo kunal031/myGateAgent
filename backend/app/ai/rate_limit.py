@@ -67,10 +67,19 @@ class DailyQuotaExceeded(RuntimeError):
     """Raised when the configured daily request cap is exhausted."""
 
 
+# Separate counters so one workload cannot exhaust another. Ingestion is a
+# multi-hour batch; generation is what the student actually sees. Sharing a
+# budget meant a vision run could leave nothing for cards.
 generation_limiter = RateLimiter(
     max_rpm=settings.GEMINI_MAX_RPM,
-    max_per_day=settings.GEMINI_MAX_REQUESTS_PER_DAY,
+    max_per_day=settings.GEMINI_GENERATE_MAX_PER_DAY,
     state_name="generation",
+)
+
+ingest_limiter = RateLimiter(
+    max_rpm=settings.GEMINI_MAX_RPM,
+    max_per_day=settings.GEMINI_INGEST_MAX_PER_DAY,
+    state_name="ingest",
 )
 
 search_limiter = RateLimiter(

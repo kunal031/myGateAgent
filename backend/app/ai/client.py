@@ -18,7 +18,9 @@ from tenacity import (
 
 from ..core.config import settings
 from . import models
-from .rate_limit import DailyQuotaExceeded, generation_limiter, search_limiter
+from .rate_limit import (
+    DailyQuotaExceeded, generation_limiter, ingest_limiter, search_limiter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +88,7 @@ def transcribe_image(
     temperature: float = 0.0,
 ) -> str:
     """Transcribe a rendered page image. Temperature 0: copying, not creating."""
-    generation_limiter.acquire()
+    ingest_limiter.acquire()
 
     response = get_client().models.generate_content(
         model=model,
