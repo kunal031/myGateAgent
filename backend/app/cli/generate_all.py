@@ -20,10 +20,22 @@ from ..services.generation.grounding import InsufficientContext, build_context
 from ..services.retrieval.hybrid import search
 
 
-def topic_is_ready(db, topic: Topic) -> bool:
-    """Cheap keyword-only check, so a dry run costs no quota."""
+def topic_is_ready(db, topic: Topic, *, semantic: bool = True) -> bool:
+    """Whether the corpus holds enough material to generate from.
+
+    Keyword-only matching judged 19 topics too thin that hybrid search finds
+    ample material for: a name like "Dynamic Programming (LCS, Knapsack,
+    Matrix Chain)" shares few literal tokens with the prose that explains
+    it. Semantic retrieval is the same path generation itself uses, so the
+    gate now agrees with what generation will actually see.
+
+    The gate is deliberately permissive; grading rejects weak context
+    downstream, where the judgement is per-card rather than per-topic.
+
+    `semantic=False` keeps --dry-run free of embedding calls.
+    """
     matches = search(db, topic.name, top_k=8,
-                     subject_id=topic.subject_id, semantic=False)
+                     subject_id=topic.subject_id, semantic=semantic)
     try:
         build_context(matches)
         return True
@@ -63,7 +75,8 @@ def main() -> None:
             if has_concepts and has_cards:
                 done += 1
                 continue
-            (ready if topic_is_ready(db, topic) else thin).append(topic)
+            (ready if topic_is_ready(db, topic, semantic=not args.dry_run)
+             else thin).append(topic)
 
         print(f"{len(topics)} topics: {done} already generated, "
               f"{len(ready)} ready, {len(thin)} too thin\n")
