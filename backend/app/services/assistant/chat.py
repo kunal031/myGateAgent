@@ -37,6 +37,16 @@ HISTORY_TURNS = 6
 MIN_ANSWER_RELEVANCE = 0.55
 MIN_ANSWER_SUFFICIENCY = 0.55
 
+# Grading costs an LLM round trip (~1.4s), so it is skipped when fusion has
+# already settled the question. RRF only exceeds this when the keyword and
+# vector halves agree on the same chunks; when nothing matches, the scores
+# collapse to a fixed rank-position pattern topping out around 0.0164
+# regardless of the query. Measured: in-corpus queries score 0.031-0.033,
+# absent ones 0.0164 exactly. The gap is wide, so the threshold sits above
+# the no-match ceiling with room to spare, and anything between it and a
+# clear match still goes to the grader.
+STRONG_MATCH_SCORE = 0.025
+
 
 @dataclass
 class Answer:
@@ -132,11 +142,19 @@ def answer(
     # Grade what came back. Retrieval returning prose is not the same as the
     # corpus answering the question, and only the latter justifies skipping
     # the web.
+    top_score = matches[0].score if matches else 0.0
+    strong = top_score >= STRONG_MATCH_SCORE
+
     needs_web = not context_text
-    if context_text:
+    if context_text and strong:
+        # Both retrieval halves agree, so the material is on topic and the
+        # grader would only confirm what fusion already showed.
+        logger.debug("Skipping grade: strong fusion match (%.4f)", top_score)
+    elif context_text:
         grade = grade_context(
             context_text, concept=query[:120], topic=query[:120],
             subject=_subject_name(db, scope), level="gate",
+            interactive=True,
         )
         needs_web = (
             grade.verdict == "web"
@@ -185,6 +203,7 @@ def answer(
             language=LANGUAGE_NAMES.get(language, "English")
         ),
         temperature=0.3,
+        interactive=True,
     )
     return Answer(text=text.strip(), citations=citations,
                   source_type=source_type)

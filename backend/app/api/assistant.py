@@ -10,6 +10,7 @@ from ..core.database import get_db
 from ..models.assistant import AssistantMessage, AssistantThread, Language
 from ..models.models import FeedCard, Subject
 from ..services.assistant import answer, parse_intent
+from ..services.assistant.intent import Intent
 
 router = APIRouter(prefix="/api/assistant", tags=["Assistant"])
 
@@ -21,6 +22,23 @@ class AskRequest(BaseModel):
     thread_id: int | None = None
     card_id: int | None = None
     language: str | None = None          # overrides the detected language
+
+
+def _card_intent(card: FeedCard, query: str, language: str | None):
+    """The intent for an Explain, taken from the card instead of the model.
+
+    Mirrors what parse_intent would return for a question about this card:
+    a chat scoped to the card's own subject.
+    """
+    return Intent(
+        output="chat",
+        subject_slug=card.subject.slug if card.subject else None,
+        topic=None,
+        level=None,
+        card_type=None,
+        clean_query=query,
+        language=language if language in VALID_LANGUAGES else "en",
+    )
 
 
 @router.post("/ask")
@@ -41,7 +59,14 @@ def ask(payload: AskRequest, db: Session = Depends(get_db)):
     if payload.card_id and card is None:
         raise HTTPException(404, "No such card")
 
-    intent = parse_intent(db, query)
+    # Intent parsing is an LLM round trip, and with a card there is nothing
+    # to decide: Explain is always a conversation about that card, never a
+    # request to refile the feed. Skipping it removes ~1.4s from the path
+    # the student actually waits on.
+    if card is not None:
+        intent = _card_intent(card, query, payload.language)
+    else:
+        intent = parse_intent(db, query)
     language = payload.language if payload.language in VALID_LANGUAGES else intent.language
 
     # A request for cards is answered with filters, not prose: the client
