@@ -1,11 +1,14 @@
-"""Copy the SQLite database into PostgreSQL, then load the vectors.
+"""Copy one database into another, carrying the embeddings across.
 
-Reversible until cut-over: SQLite is only read, never modified, so a failed
-run costs nothing and the app keeps running on SQLite until DATABASE_URL
-changes.
+Originally a one-way SQLite -> Postgres migration. Now also the way local
+Postgres is pushed to Aiven, so the source is selectable: SQLite is a stale
+pre-ingestion backup (2,590 chunks) and reading from it would silently
+overwrite a full corpus with a snapshot.
+
+The source is only read, never modified, so a failed run costs nothing.
 
     ./venv/bin/python -m app.cli.migrate_to_postgres --dry-run
-    ./venv/bin/python -m app.cli.migrate_to_postgres
+    ./venv/bin/python -m app.cli.migrate_to_postgres --from-local --to-aiven
 """
 
 import argparse
@@ -29,8 +32,10 @@ TABLE_ORDER = [
     "exam_sessions", "exam_items",
 ]
 
-# Postgres rejects a text value in a halfvec column, and the vectors are
-# loaded separately from the .npy store in step 2.
+# Postgres rejects a text value in a halfvec column, so the embedding is
+# never copied as an ordinary column. It is carried separately: from the
+# source's own halfvec column when migrating Postgres -> Postgres, or from
+# the .npy store when the source is SQLite.
 SKIP_COLUMNS = {"source_chunks": {"embedding"}}
 
 VECTOR_DIR = settings.DATA_DIR / "vectors"
@@ -42,10 +47,65 @@ def _safe(dsn: str) -> str:
     return re.sub(r"://([^:/@]+):[^@]+@", r"://\1:***@", dsn)
 
 
-def _engines(postgres_url: str):
-    source = create_engine(settings.SQLITE_URL)
-    target = create_engine(postgres_url)
+def _engines(postgres_url: str, *, source_url: str | None = None):
+    """Build (source, target). The source defaults to SQLite for the
+    original migration path; --from-local points it at local Postgres."""
+    source = create_engine(source_url or settings.SQLITE_URL)
+    target = create_engine(postgres_url, connect_args={"connect_timeout": 30})
     return source, target
+
+
+def add_missing_columns(target_engine, *, dry_run: bool) -> list[str]:
+    """Add columns the models declare but an older target lacks.
+
+    Base.metadata.create_all only creates missing tables; it never alters an
+    existing one. A target seeded before a column was added therefore stays
+    behind forever, and the mismatch surfaces only as an INSERT failing on
+    an unknown column -- after a --replace has already emptied it.
+
+    Only additive changes are made: a nullable column with no default, which
+    is safe to apply to a populated table and cannot destroy data. Type
+    changes and drops are deliberately not attempted.
+    """
+    from sqlalchemy.schema import CreateColumn
+
+    inspector = inspect(target_engine)
+    present_tables = set(inspector.get_table_names())
+    added: list[str] = []
+
+    for name in TABLE_ORDER:
+        table = Base.metadata.tables.get(name)
+        if table is None or name not in present_tables:
+            continue
+        existing = {c["name"] for c in inspector.get_columns(name)}
+        for column in table.columns:
+            if column.name in existing:
+                continue
+            ddl = str(CreateColumn(column).compile(dialect=target_engine.dialect))
+            # Strip constraints that cannot be added to existing rows.
+            ddl = ddl.replace(" NOT NULL", "")
+            added.append(f"{name}.{column.name}")
+            if not dry_run:
+                with target_engine.begin() as conn:
+                    conn.execute(text(
+                        f"ALTER TABLE {name} ADD COLUMN IF NOT EXISTS {ddl}"
+                    ))
+    return added
+
+
+def truncate_target(target_engine, *, dry_run: bool) -> None:
+    """Empty the target's copied tables so a resync replaces rather than
+    collides. Children first is unnecessary under one TRUNCATE ... CASCADE,
+    but the explicit list keeps anything outside TABLE_ORDER untouched.
+    """
+    present = set(inspect(target_engine).get_table_names())
+    targets = [n for n in TABLE_ORDER if n in present]
+    if dry_run or not targets:
+        return
+    with target_engine.begin() as conn:
+        conn.execute(text(
+            f"TRUNCATE TABLE {', '.join(targets)} RESTART IDENTITY CASCADE"
+        ))
 
 
 def copy_tables(source_engine, target_engine, *, dry_run: bool) -> dict:
@@ -99,8 +159,12 @@ def reset_sequences(target_engine) -> None:
             ))
 
 
-def load_vectors(target_engine, *, dry_run: bool) -> int:
-    """Move embeddings from the .npy store onto their chunk rows."""
+def load_vectors_from_npy(target_engine, *, dry_run: bool) -> int:
+    """Move embeddings from the .npy store onto their chunk rows.
+
+    Used only when the source is SQLite. The store is a stale pre-ingestion
+    snapshot, so this is not the path for refreshing a cloud copy.
+    """
     vectors_path = VECTOR_DIR / "chunks.npy"
     ids_path = VECTOR_DIR / "chunk_ids.json"
     if not (vectors_path.exists() and ids_path.exists()):
@@ -131,6 +195,46 @@ def load_vectors(target_engine, *, dry_run: bool) -> int:
     return len(chunk_ids)
 
 
+def copy_vectors_between_pg(source_engine, target_engine, *,
+                            dry_run: bool) -> int:
+    """Carry embeddings from one Postgres halfvec column to another.
+
+    Read back as text and re-cast on write: that round-trip needs no pgvector
+    adapter registered on either side, and the literal is exactly what a
+    halfvec cast accepts. Batched because 13k rows of 3,072 dimensions is
+    too much to hold in one statement, and streamed so the whole corpus is
+    never resident at once.
+    """
+    with source_engine.connect() as src:
+        total = src.execute(text(
+            "SELECT count(*) FROM source_chunks WHERE embedding IS NOT NULL"
+        )).scalar() or 0
+        if dry_run or not total:
+            return total
+
+        moved = 0
+        Session = sessionmaker(bind=target_engine)
+        with Session() as session:
+            result = src.execution_options(stream_results=True, max_row_buffer=500).execute(
+                text("SELECT id, embedding::text AS e FROM source_chunks "
+                     "WHERE embedding IS NOT NULL ORDER BY id")
+            )
+            while True:
+                rows = result.fetchmany(500)
+                if not rows:
+                    break
+                session.execute(
+                    text("UPDATE source_chunks "
+                         "SET embedding = CAST(:e AS halfvec) WHERE id = :i"),
+                    [{"i": int(r.id), "e": r.e} for r in rows],
+                )
+                session.commit()
+                moved += len(rows)
+                print(f"    vectors copied: {moved:,}/{total:,}", flush=True)
+
+    return moved
+
+
 def create_indexes(target_engine) -> None:
     """HNSW for vectors, GIN for keyword search.
 
@@ -156,6 +260,14 @@ def main() -> None:
                         help="target DSN; defaults to POSTGRES_URL")
     parser.add_argument("--to-aiven", action="store_true",
                         help="target POSTGRESQL_AIVEN_URI instead")
+    parser.add_argument("--from-local", action="store_true",
+                        help="read local Postgres instead of SQLite; required "
+                             "to resync a cloud copy, since the SQLite file "
+                             "is a stale pre-ingestion backup")
+    parser.add_argument("--replace", action="store_true",
+                        help="truncate the target's tables first, so a "
+                             "populated target is replaced rather than hit "
+                             "with primary-key collisions")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -168,7 +280,13 @@ def main() -> None:
     else:
         target_url = args.postgres_url or settings.POSTGRES_URL
 
-    source_engine, target_engine = _engines(target_url)
+    source_url = None
+    if args.from_local:
+        source_url = settings._normalise_dsn(settings.POSTGRES_URL)
+        if not source_url:
+            raise SystemExit("POSTGRES_URL is not set in backend/.env")
+
+    source_engine, target_engine = _engines(target_url, source_url=source_url)
 
     # The vector extension must exist before create_all, or the halfvec
     # column has no type to resolve against.
@@ -176,8 +294,18 @@ def main() -> None:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     Base.metadata.create_all(bind=target_engine)
 
-    print(f"source: {settings.SQLITE_URL}")
+    print(f"source: {_safe(source_url or settings.SQLITE_URL)}")
     print(f"target: {_safe(target_url)}\n")
+
+    added = add_missing_columns(target_engine, dry_run=args.dry_run)
+    if added:
+        verb = "would add" if args.dry_run else "added"
+        print(f"  schema {verb}: {', '.join(added)}\n")
+
+    if args.replace:
+        truncate_target(target_engine, dry_run=args.dry_run)
+        print("  target tables truncated\n" if not args.dry_run
+              else "  [dry-run] would truncate target tables\n")
 
     counts = copy_tables(source_engine, target_engine, dry_run=args.dry_run)
     for name, (read, written) in counts.items():
@@ -185,7 +313,11 @@ def main() -> None:
             print(f"  {name:22s} {read:6,} rows"
                   f"{'' if args.dry_run else f' -> {written:,} copied'}")
 
-    vectors = load_vectors(target_engine, dry_run=args.dry_run)
+    if args.from_local:
+        vectors = copy_vectors_between_pg(
+            source_engine, target_engine, dry_run=args.dry_run)
+    else:
+        vectors = load_vectors_from_npy(target_engine, dry_run=args.dry_run)
     print(f"\n  vectors {'to load' if args.dry_run else 'loaded'}: {vectors:,}")
 
     if args.dry_run:
