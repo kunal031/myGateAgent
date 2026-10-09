@@ -128,6 +128,10 @@ def ingest_inbox(
         try:
             reports.append(ingest_file(db, path, max_pages=max_pages))
         except Exception as exc:
+            # Roll back before continuing: a failed flush leaves the session
+            # unusable, so without this one bad file fails every file after
+            # it with a misleading "transaction has been rolled back".
+            db.rollback()
             logger.exception("Failed to ingest %s", path.name)
             reports.append({"status": "failed", "file": path.name, "error": str(exc)})
     return reports

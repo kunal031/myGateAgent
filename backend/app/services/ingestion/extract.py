@@ -29,12 +29,25 @@ study notes into Markdown.
 EMPTY_MARKER = "EMPTY_PAGE"
 RENDER_DPI = 150
 
+# Below this average line length, a text layer is shattered rather than
+# readable and the page is better transcribed from the image.
+MIN_AVG_LINE_CHARS = 20
+
 # Watermarks and boilerplate that appear on every page of some sources and
 # would otherwise look like a usable text layer.
 _NOISE = re.compile(r"Priyanshu|x\.com/|GATE \d{4} AIR", re.I)
 
 # Bad OCR signature: <br> soup with little real prose.
 _BR_SOUP = re.compile(r"<br\s*/?>", re.I)
+
+# PDF text layers sometimes carry control characters. PostgreSQL rejects a
+# NUL outright, and the rest are noise, so they are stripped at extraction
+# rather than left for the database to reject mid-transaction.
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def sanitise(text: str) -> str:
+    return _CONTROL.sub(" ", text)
 
 
 def file_hash(path: Path) -> str:
@@ -46,12 +59,25 @@ def file_hash(path: Path) -> str:
 
 
 def page_has_usable_text(page) -> bool:
-    """True when the embedded text layer is worth using as-is."""
-    text = _NOISE.sub("", page.get_text("text")).strip()
+    """True when the embedded text layer is worth using as-is.
+
+    Some digital PDFs carry a text layer that extracts one word per line
+    with words split mid-token ("INTR ODUCTION", "R UN-TIME ENVIR ONMENTS").
+    It is technically text, but generating from it produces nonsense, so a
+    page whose lines are too short goes to vision like a scan.
+    """
+    text = sanitise(_NOISE.sub("", page.get_text("text"))).strip()
     if len(text) < 200:
         return False
-    # Reject layers that are mostly line-break markup rather than sentences.
-    return len(_BR_SOUP.findall(text)) < len(text) / 120
+    if len(_BR_SOUP.findall(text)) >= len(text) / 120:
+        return False
+
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return False
+    # Healthy prose averages well over 20 characters a line; a shattered
+    # layer averages about 3.
+    return sum(len(line) for line in lines) / len(lines) >= MIN_AVG_LINE_CHARS
 
 
 def _cache_path(content_hash: str, page_number: int) -> Path:
@@ -89,7 +115,7 @@ def extract_pdf_pages(
             else:
                 text, method = transcribe_page(page, content_hash, number), "VISION"
 
-            text = _NOISE.sub("", text).strip()
+            text = sanitise(_NOISE.sub("", text)).strip()
             if text and EMPTY_MARKER not in text:
                 pages.append({"page_number": number, "text": text, "method": method})
     finally:

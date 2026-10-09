@@ -30,7 +30,14 @@ STAGES: list[tuple[str, str, bool]] = [
     ("Topper notes (handwritten)", "notes/handwritten-air50/*.pdf", True),
     ("Topper notes (GitHub)", "notes/github-priyanshu/*.pdf", True),
     ("Other notes", "notes/karan-suthar/**/*.pdf", True),
-    ("Textbooks", "books/*.pdf", True),
+    # Recursive: books are staged under books/<subject-slug>/ so the
+    # classifier can read the subject from the path.
+    #
+    # Flagged as free rather than vision: the standard texts are digital
+    # editions with real text layers -- measured, 6,618 of 9,264 pages
+    # extract directly. A book that turns out to be scanned still falls
+    # back to vision per page inside the extractor.
+    ("Textbooks", "books/**/*.pdf", False),
 ]
 
 
