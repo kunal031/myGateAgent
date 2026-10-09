@@ -10,7 +10,7 @@ is additive and idempotent: re-running is safe, and no data is rewritten.
 from sqlalchemy import text
 
 from ..core.database import Base, SessionLocal, engine
-from ..models import concepts, models, sources  # noqa: F401  (register tables)
+from ..models import concepts, exams, models, sources  # noqa: F401  (register tables)
 
 # (table, column, SQL type + default)
 ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
@@ -27,6 +27,7 @@ ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("questions", "source_chunk_ids", "VARCHAR(200) DEFAULT ''"),
     ("questions", "review_status", "VARCHAR(20) DEFAULT 'approved'"),
     ("questions", "origin", "VARCHAR(20) DEFAULT 'SEED'"),
+    ("exam_sessions", "shortfall_note", "TEXT DEFAULT ''"),
 ]
 
 INDEXES: list[tuple[str, str]] = [

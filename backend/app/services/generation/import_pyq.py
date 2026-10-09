@@ -12,7 +12,7 @@ import re
 
 from sqlalchemy.orm import Session
 
-from ...models import concepts as _concepts  # noqa: F401  (register FK target)
+from ...models import *  # noqa: F401,F403  (register all tables)
 from ...models.models import Question, Subject, Topic
 from .pyq_book import (
     BookQuestion, Chapter, group_into_chapters, load_book_chunks,

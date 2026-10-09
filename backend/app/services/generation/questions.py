@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from ...ai import client as ai_client
 from ...ai.prompts import questions as prompts
-from ...models import concepts as _concepts  # noqa: F401
+from ...models import *  # noqa: F401,F403  (register all tables)
 from ...models.concepts import Concept
 from ...models.models import Question, Subject, Topic
 from ...models.sources import Source, SourceChunk
