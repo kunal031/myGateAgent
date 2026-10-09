@@ -92,9 +92,60 @@ _HEADER_TO_SUBJECT: list[tuple[str, tuple[str, ...]]] = [
 ]
 
 
+# The publisher's template leaves this on chapter-opening pages.
+_TEMPLATE_ARTIFACT = "design of springs"
+
+
 def _header_name(pages: dict[int, str], page: int) -> str:
     match = _PAGE_HEADER.search(pages.get(page, ""))
-    return match.group("name").strip().lower() if match else ""
+    if match is None:
+        return ""
+    name = match.group("name").strip().lower()
+    return "" if name == _TEMPLATE_ARTIFACT else name
+
+
+def chapter_name(pages: dict[int, str], chapter: Chapter) -> str:
+    """The chapter's own name, from the header repeated across its pages.
+
+    The book is laid out subject -> chapter -> questions, and a chapter maps
+    onto a syllabus topic ("Process Synchronization", "Data Link Layer").
+    The opening page carries a template artifact instead, so the most common
+    header across the chapter is used.
+    """
+    from collections import Counter
+
+    names = [
+        _header_name(pages, page)
+        for page in range(chapter.start_page, chapter.end_page + 1)
+    ]
+    names = [n for n in names if n]
+    return Counter(names).most_common(1)[0][0] if names else ""
+
+
+def _match_topic(db: Session, subject: Subject, name: str) -> Topic | None:
+    """Map a chapter name onto the best syllabus topic in that subject.
+
+    Scores on shared significant words. Without this every question in a
+    subject lands on that subject's first topic, which makes topic filters
+    and the per-topic mistake registry meaningless.
+    """
+    if not name:
+        return None
+
+    words = {w for w in re.split(r"[^a-z0-9]+", name.lower()) if len(w) > 3}
+    if not words:
+        return None
+
+    best, best_score = None, 0
+    for topic in db.query(Topic).filter(Topic.subject_id == subject.id).all():
+        topic_words = {
+            w for w in re.split(r"[^a-z0-9]+", topic.name.lower()) if len(w) > 3
+        }
+        score = len(words & topic_words)
+        if score > best_score:
+            best, best_score = topic, score
+
+    return best
 
 
 def _subject_for_chapter(db: Session, chapter: Chapter, chunks) -> Subject | None:
@@ -136,6 +187,10 @@ def import_book_questions(db: Session, *, limit: int | None = None) -> dict:
     solutions = parse_solutions(chapters, chunks)
     pair_questions_with_answers(chapters)
 
+    page_text: dict[int, str] = {}
+    for chunk in chunks:
+        page_text.setdefault(chunk.page_number, chunk.content)
+
     stored = skipped = 0
 
     for chapter_index, chapter in enumerate(chapters):
@@ -143,8 +198,11 @@ def import_book_questions(db: Session, *, limit: int | None = None) -> dict:
         if subject is None:
             skipped += len(chapter.questions)
             continue
-        topic = (db.query(Topic).filter(Topic.subject_id == subject.id)
-                   .order_by(Topic.id).first())
+        name = chapter_name(page_text, chapter)
+        topic = _match_topic(db, subject, name) or (
+            db.query(Topic).filter(Topic.subject_id == subject.id)
+              .order_by(Topic.id).first()
+        )
         if topic is None:
             skipped += len(chapter.questions)
             continue
