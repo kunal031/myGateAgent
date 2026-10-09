@@ -155,3 +155,91 @@ def submit_answer(payload: AnswerSubmission, db: Session = Depends(get_db)):
         "question_type": q.question_type,
         "source": q.source
     }
+
+
+@router.get("/{question_id}/solution")
+def get_solution(question_id: int, db: Session = Depends(get_db)):
+    """The worked solution for a question, once it has been attempted.
+
+    Solutions are review material: seeing one before answering turns a drill
+    into reading. The endpoint therefore refuses until an attempt exists,
+    which is also what the UI keys the "Show solution" control off.
+    """
+    question = db.query(Question).filter(Question.id == question_id).first()
+    if question is None:
+        raise HTTPException(status_code=404, detail="Question not found")
+
+    attempts = (
+        db.query(Attempt)
+        .filter(Attempt.question_id == question_id)
+        .order_by(Attempt.created_at.desc())
+        .all()
+    )
+    if not attempts:
+        raise HTTPException(
+            status_code=409,
+            detail="Attempt this question before viewing its solution.",
+        )
+
+    return {
+        "question_id": question.id,
+        "question_type": question.question_type,
+        "correct_answer": question.correct_answer,
+        "solution": question.explanation,
+        "has_worked_solution": "not available" not in question.explanation.lower(),
+        "source": question.source,
+        "exam_year": question.exam_year,
+        "provenance": question.provenance or "",
+        "attempts": [
+            {
+                "user_answer": a.user_answer,
+                "is_correct": a.is_correct,
+                "marks_obtained": a.marks_obtained,
+                "time_spent_seconds": a.time_spent_seconds,
+                "mode": a.mode,
+                "attempted_at": a.created_at.isoformat() if a.created_at else None,
+            }
+            for a in attempts
+        ],
+    }
+
+
+@router.get("/review/mistakes")
+def review_mistakes(
+    limit: int = Query(default=20, le=100),
+    subject_slug: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Questions answered wrong, newest first, for post-quiz analysis.
+
+    This is the list the analytics page drills into: every entry already has
+    an attempt, so its solution is viewable.
+    """
+    query = (
+        db.query(MistakeRegistry, Question, Subject, Topic)
+        .join(Question, MistakeRegistry.question_id == Question.id)
+        .join(Subject, Question.subject_id == Subject.id)
+        .join(Topic, Question.topic_id == Topic.id)
+    )
+    if subject_slug and subject_slug != "all":
+        query = query.filter(Subject.slug == subject_slug)
+
+    rows = query.order_by(MistakeRegistry.last_attempted_at.desc()).limit(limit).all()
+
+    return [
+        {
+            "question_id": question.id,
+            "content": question.content,
+            "question_type": question.question_type,
+            "marks": question.marks,
+            "subject_name": subject.name,
+            "topic_name": topic.name,
+            "exam_year": question.exam_year,
+            "correct_answer": question.correct_answer,
+            "last_user_answer": mistake.last_user_answer,
+            "error_count": mistake.error_count,
+            "mastery_level": mistake.mastery_level,
+            "has_worked_solution": "not available" not in question.explanation.lower(),
+        }
+        for mistake, question, subject, topic in rows
+    ]
