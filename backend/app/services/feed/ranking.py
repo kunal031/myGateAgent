@@ -50,6 +50,8 @@ def get_feed_page(
     card_type: str | None = None,
     mode: str | None = None,
     topic_slug: str | None = None,
+    source_type: str | None = None,
+    tag: str | None = None,
     offset: int = 0,
     limit: int = DEFAULT_PAGE_SIZE,
 ) -> FeedPage:
@@ -82,6 +84,14 @@ def get_feed_page(
         query = query.filter(FeedCard.card_type == card_type)
     if mode and mode != "all":
         query = query.filter(FeedCard.mode == mode)
+    if source_type and source_type != "all":
+        query = query.filter(FeedCard.source_type == source_type)
+    if tag:
+        # Tags are stored comma-separated; the delimiters on both sides stop
+        # "graph" from matching "graph-theory".
+        query = query.filter(
+            func.concat(",", FeedCard.tags, ",").contains(f",{tag},")
+        )
 
     total = query.count()
 
@@ -104,6 +114,10 @@ def get_feed_page(
             "mode": card.mode,
             "concept_id": card.concept_id,
             "provenance": card.provenance or "",
+            # Lets the card show where it came from, and marks the ones the
+            # student wrote themselves.
+            "source_type": card.source_type or "knowledge_base",
+            "tags": [t for t in (card.tags or "").split(",") if t],
             "title": card.title,
             "content": card.content,
             "takeaway": card.takeaway,

@@ -94,9 +94,18 @@ class FeedCard(Base):
     source_chunk_ids = Column(String(200), default="")
     review_status = Column(String(20), default="approved", index=True)
 
-    # knowledge_base, web, or hybrid -- so a card sourced online is
-    # distinguishable from one taken from the student's own books.
+    # knowledge_base, web, hybrid, or user -- so a card sourced online is
+    # distinguishable from one taken from the student's own books, and a
+    # hand-written one from anything generated.
     source_type = Column(String(20), default="knowledge_base", index=True)
+
+    # Free-text tags on a user-written card: a chapter name, a concept it
+    # relates to, anything worth filtering by later. Stored as a
+    # comma-separated string rather than a join table because these are
+    # labels the student invents, not rows in the syllabus -- the chapter
+    # and subtopic tables exist but are not yet populated, so there is
+    # nothing to point a foreign key at.
+    tags = Column(String(400), default="", index=True)
 
     card_type = Column(String(20), default="CONCEPT")  # TRAP, FORMULA, CONCEPT, SHORTCUT
     title = Column(String(200), nullable=False)

@@ -33,12 +33,15 @@ ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("sources", "ingest_status", "VARCHAR(20) DEFAULT 'complete'"),
     ("sources", "ingest_error", "TEXT DEFAULT ''"),
     ("feed_cards", "source_type", "VARCHAR(20) DEFAULT 'knowledge_base'"),
+    ("feed_cards", "tags", "VARCHAR(400) DEFAULT ''"),
 ]
 
 INDEXES: list[tuple[str, str]] = [
     ("ix_feed_cards_concept_id", "feed_cards(concept_id)"),
     ("ix_feed_cards_mode", "feed_cards(mode)"),
     ("ix_feed_cards_review_status", "feed_cards(review_status)"),
+    ("ix_feed_cards_source_type", "feed_cards(source_type)"),
+    ("ix_feed_cards_tags", "feed_cards(tags)"),
     ("ix_questions_concept_id", "questions(concept_id)"),
     ("ix_questions_exam_year", "questions(exam_year)"),
     ("ix_questions_origin", "questions(origin)"),
