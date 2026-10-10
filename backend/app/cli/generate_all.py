@@ -81,6 +81,13 @@ def main() -> None:
         print(f"{len(topics)} topics: {done} already generated, "
               f"{len(ready)} ready, {len(thin)} too thin\n")
 
+        # The readiness scan read source_chunks, which leaves a transaction
+        # open. Generation then runs for hours without necessarily writing
+        # through this session, so that snapshot would be held the whole
+        # time -- blocking every ALTER TABLE and pinning dead rows against
+        # autovacuum. Measured at 15 hours before this was noticed.
+        db.commit()
+
         if args.dry_run:
             for topic in ready:
                 print(f"  ready  {topic.name[:60]}")
