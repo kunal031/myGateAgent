@@ -7,6 +7,7 @@ import {
   MessageCircleQuestion, Pencil, Trash2, UserPen, Zap, type LucideIcon,
 } from "lucide-react";
 
+import ConceptPopover from "./ConceptPopover";
 import MathText from "@/components/MathText";
 import { FeedCardItem } from "@/lib/api";
 import { variantFor } from "./card-variants";
@@ -105,12 +106,14 @@ export default function FeedCard({
         <p className="truncate text-[12px] font-semibold" style={{ color: "var(--ink-faint)" }}>
           {card.subject_name}
         </p>
-        <h3
-          className="mt-1 break-words text-[18px] font-bold leading-snug"
-          style={{ color: "var(--ink)" }}
-        >
-          {card.title}
-        </h3>
+        <ConceptPopover cardId={card.id}>
+          <h3
+            className="mt-1 break-words text-[18px] font-bold leading-snug"
+            style={{ color: "var(--ink)" }}
+          >
+            {card.title}
+          </h3>
+        </ConceptPopover>
       </div>
 
       <div className="min-w-0 px-4 py-2.5">
