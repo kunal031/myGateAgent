@@ -217,6 +217,12 @@ def create_card(payload: UserCardPayload, db: Session = Depends(get_db)):
         tags=_clean_tags(payload.tags),
         provenance="",
         review_status="approved",
+        # A card the student chose to write is worth more to them than one
+        # they have never seen. Every generated card sits at 1, so without
+        # this a new card sorts last by id and is invisible in the feed it
+        # was written for. Below one mistake's boost, so remediation still
+        # outranks it.
+        base_weight=2,
     )
     db.add(card)
     db.commit()
