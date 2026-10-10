@@ -32,6 +32,25 @@ export interface FeedCardItem {
   effective_weight: number;
   is_remedial: boolean;
   recent_mistakes_in_topic: number;
+  provenance?: string;
+  /** knowledge_base | web | hybrid | user */
+  source_type?: string;
+  tags?: string[];
+  concept_id?: number | null;
+}
+
+/** The fields a hand-written card is created or edited with. */
+export interface UserCardInput {
+  subject_slug: string;
+  topic_slug: string;
+  title: string;
+  content: string;
+  takeaway?: string;
+  card_type?: string;
+  mode?: string;
+  difficulty?: string;
+  concept_id?: number | null;
+  tags?: string[];
 }
 
 export interface QuestionOption {
@@ -129,6 +148,9 @@ export interface FeedFilters {
   topicSlug?: string;
   cardType?: string;
   mode?: string;
+  /** knowledge_base | web | hybrid | user */
+  sourceType?: string;
+  tag?: string;
 }
 
 export async function fetchFeed(
@@ -144,6 +166,8 @@ export async function fetchFeed(
   add("topic_slug", filters.topicSlug);
   add("card_type", filters.cardType);
   add("mode", filters.mode);
+  add("source_type", filters.sourceType);
+  add("tag", filters.tag);
   params.append("offset", String(offset));
   params.append("limit", String(limit));
 
@@ -493,4 +517,40 @@ export async function fetchSolution(questionId: number): Promise<SolutionRespons
   const res = await fetch(`${API_BASE}/api/quiz/${questionId}/solution`);
   if (!res.ok) throw new Error((await res.json()).detail ?? "Solution unavailable");
   return res.json();
+}
+
+export async function createUserCard(input: UserCardInput): Promise<FeedCardItem> {
+  const res = await fetch(`${API_BASE}/api/feed`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.detail ?? "Could not save that card");
+  }
+  return res.json();
+}
+
+export async function updateUserCard(
+  id: number, input: UserCardInput,
+): Promise<FeedCardItem> {
+  const res = await fetch(`${API_BASE}/api/feed/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.detail ?? "Could not update that card");
+  }
+  return res.json();
+}
+
+export async function deleteUserCard(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/feed/${id}`, { method: "DELETE" });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.detail ?? "Could not delete that card");
+  }
 }

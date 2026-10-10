@@ -1,10 +1,11 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, Plus } from "lucide-react";
 
 import AssistantBar from "@/features/assistant/AssistantBar";
 import ChatPanel from "@/features/assistant/ChatPanel";
+import CardComposer from "@/features/feed/CardComposer";
 import FeedCard from "@/features/feed/FeedCard";
 import { useHideOnScroll } from "@/features/feed/useHideOnScroll";
 import {
@@ -12,7 +13,7 @@ import {
 } from "@/features/feed/useInfiniteFeed";
 import {
   AssistantLanguage, FeedCardItem, FeedFilters, SubjectItem,
-  askAssistant, fetchSyllabus, markCardRecalled,
+  askAssistant, deleteUserCard, fetchSyllabus, markCardRecalled,
 } from "@/lib/api";
 
 const MODES = [
@@ -47,14 +48,18 @@ export default function FeedPage() {
   const [explainCard, setExplainCard] = useState<FeedCardItem | null>(null);
   const [explainPending, setExplainPending] = useState(false);
   const [language, setLanguage] = useState<AssistantLanguage>("en");
+  // "all" or "user": the feed can be narrowed to cards written by hand.
+  const [sourceType, setSourceType] = useState("all");
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [editingCard, setEditingCard] = useState<FeedCardItem | null>(null);
 
   const filters: FeedFilters = useMemo(
-    () => ({ subjectSlug, topicSlug, cardType, mode }),
-    [subjectSlug, topicSlug, cardType, mode],
+    () => ({ subjectSlug, topicSlug, cardType, mode, sourceType }),
+    [subjectSlug, topicSlug, cardType, mode, sourceType],
   );
 
-  const { cards, loading, loadingMore, error, total, hasMore, loadMore, dismiss } =
-    useInfiniteFeed(filters);
+  const { cards, loading, loadingMore, error, total, hasMore, loadMore, dismiss,
+          refresh } = useInfiniteFeed(filters);
 
   const sentinelRef = useScrollSentinel(loadMore, hasMore && !loading);
   const headerHidden = useHideOnScroll();
@@ -113,6 +118,24 @@ export default function FeedPage() {
       }
     },
     [language],
+  );
+
+  const openComposer = useCallback((card: FeedCardItem | null = null) => {
+    setEditingCard(card);
+    setComposerOpen(true);
+  }, []);
+
+  const handleDelete = useCallback(
+    async (card: FeedCardItem) => {
+      if (!window.confirm(`Delete "${card.title}"? This cannot be undone.`)) return;
+      try {
+        await deleteUserCard(card.id);
+        dismiss(card.id);
+      } catch {
+        // The card stays put; a failed delete needs no banner of its own.
+      }
+    },
+    [dismiss],
   );
 
   const closeChat = useCallback(() => {
@@ -197,12 +220,46 @@ export default function FeedPage() {
             ))}
           </select>
 
+          <button
+            type="button"
+            onClick={() => setSourceType(sourceType === "user" ? "all" : "user")}
+            aria-pressed={sourceType === "user"}
+            className="min-h-10 shrink-0 rounded-[var(--radius-pill)] px-3 text-[11px] font-bold"
+            style={chip(sourceType === "user")}
+          >
+            Mine
+          </button>
+
+          <button
+            type="button"
+            onClick={() => openComposer(null)}
+            aria-label="Write a card"
+            className="flex min-h-10 shrink-0 items-center gap-1 rounded-[var(--radius-pill)] px-3 text-[11px] font-bold"
+            style={{
+              background: "var(--accent)",
+              border: "var(--line-width) solid var(--line)",
+              color: "var(--ink)",
+            }}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add
+          </button>
+
           <span className="ml-auto shrink-0 pl-2 text-[11px] font-bold"
                 style={{ color: "var(--ink-faint)" }}>
             {total}
           </span>
         </div>
       </div>
+
+      {composerOpen && (
+        <CardComposer
+          subjects={subjects}
+          card={editingCard}
+          onClose={() => { setComposerOpen(false); setEditingCard(null); }}
+          onSaved={() => refresh()}
+        />
+      )}
 
       {(threadId !== null || explainCard !== null) && (
         <ChatPanel
@@ -241,6 +298,8 @@ export default function FeedPage() {
               leaving={leaving.has(card.id)}
               onMastered={handleMastered}
               onExplain={handleExplain}
+              onEdit={openComposer}
+              onDelete={handleDelete}
             />
           ))}
         </div>

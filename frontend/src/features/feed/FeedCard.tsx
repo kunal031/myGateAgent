@@ -4,7 +4,7 @@ import React from "react";
 import Link from "next/link";
 import {
   AlertTriangle, ArrowRight, Binary, Check, Lightbulb,
-  MessageCircleQuestion, Zap, type LucideIcon,
+  MessageCircleQuestion, Pencil, Trash2, UserPen, Zap, type LucideIcon,
 } from "lucide-react";
 
 import MathText from "@/components/MathText";
@@ -23,16 +23,20 @@ interface Props {
   onMastered: (id: number) => void;
   /** Opens the assistant with this card already in context. */
   onExplain: (card: FeedCardItem) => void;
+  /** Only passed for cards the student wrote; generated ones are fixed. */
+  onEdit?: (card: FeedCardItem) => void;
+  onDelete?: (card: FeedCardItem) => void;
   /** True while the card plays its exit animation before removal. */
   leaving?: boolean;
 }
 
 export default function FeedCard({
-  card, onMastered, onExplain, leaving = false,
+  card, onMastered, onExplain, onEdit, onDelete, leaving = false,
 }: Props) {
   const meta = TYPE_META[card.card_type] ?? TYPE_META.CONCEPT;
   const Icon = meta.icon;
   const v = variantFor(card);
+  const mine = card.source_type === "user";
 
   return (
     <article
@@ -67,6 +71,21 @@ export default function FeedCard({
           <Icon className="h-3 w-3" />
           {meta.label}
         </span>
+
+        {mine && (
+          <span
+            className="inline-flex items-center gap-1 rounded-[var(--radius-pill)] px-2 py-0.5 text-[10px] font-extrabold tracking-wider"
+            style={{
+              background: "var(--surface)",
+              color: "var(--ink)",
+              border: "var(--line-width) solid var(--line)",
+            }}
+            title="You wrote this card"
+          >
+            <UserPen className="h-3 w-3" />
+            MINE
+          </span>
+        )}
 
         {card.is_remedial && (
           <span
@@ -114,6 +133,24 @@ export default function FeedCard({
         </div>
       </div>
 
+      {card.tags && card.tags.length > 0 && (
+        <div className="flex flex-wrap gap-1 px-4 pb-3">
+          {card.tags.map((tag) => (
+            <span
+              key={tag}
+              className="rounded-[var(--radius-pill)] px-2 py-0.5 text-[10px] font-bold"
+              style={{
+                background: "var(--surface-sunk)",
+                color: "var(--ink-soft)",
+                border: "var(--line-width) solid var(--line)",
+              }}
+            >
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
+
       <div
         className="flex items-stretch"
         style={{ borderTop: "var(--line-width) solid var(--line)" }}
@@ -143,17 +180,47 @@ export default function FeedCard({
           Explain
         </button>
 
-        <Link
-          href={`/quiz?subject=${card.subject_slug}&topic=${card.topic_slug}`}
-          className="flex min-h-11 flex-1 items-center justify-center gap-1 text-[13px] font-bold"
-          style={{
-            color: "var(--ink)",
-            borderLeft: "var(--line-width) solid var(--line)",
-          }}
-        >
-          Drill
-          <ArrowRight className="h-3.5 w-3.5" />
-        </Link>
+        {mine && onEdit && onDelete ? (
+          <>
+            <button
+              type="button"
+              onClick={() => onEdit(card)}
+              aria-label={`Edit ${card.title}`}
+              className="flex min-h-11 flex-1 items-center justify-center gap-1.5 text-[13px] font-bold"
+              style={{
+                color: "var(--ink)",
+                borderLeft: "var(--line-width) solid var(--line)",
+              }}
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              Edit
+            </button>
+            <button
+              type="button"
+              onClick={() => onDelete(card)}
+              aria-label={`Delete ${card.title}`}
+              className="flex min-h-11 w-12 shrink-0 items-center justify-center"
+              style={{
+                color: "var(--ink)",
+                borderLeft: "var(--line-width) solid var(--line)",
+              }}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </>
+        ) : (
+          <Link
+            href={`/quiz?subject=${card.subject_slug}&topic=${card.topic_slug}`}
+            className="flex min-h-11 flex-1 items-center justify-center gap-1 text-[13px] font-bold"
+            style={{
+              color: "var(--ink)",
+              borderLeft: "var(--line-width) solid var(--line)",
+            }}
+          >
+            Drill
+            <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
+        )}
       </div>
     </article>
   );
