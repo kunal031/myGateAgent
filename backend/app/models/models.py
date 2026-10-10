@@ -116,6 +116,9 @@ class FeedCard(Base):
 
     subject = relationship("Subject", back_populates="feed_cards")
     topic = relationship("Topic", back_populates="feed_cards")
+    tag_links = relationship(
+        "FeedCardTag", back_populates="card", cascade="all, delete-orphan",
+    )
 
 class Attempt(Base):
     __tablename__ = "attempts"

@@ -9,8 +9,12 @@ from sqlalchemy.orm import Session
 from ..core.database import get_db
 from ..models.concepts import Concept
 from ..models.models import FeedCard, Subject, Topic
+from ..models.tags import ConceptTag, TagType
 from ..models.rotation import CardView
 from ..services.feed.ranking import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, get_feed_page
+from ..services.feed.tagging import (
+    card_metadata, related_cards, set_card_tags, slugify,
+)
 
 router = APIRouter(prefix="/api/feed", tags=["Feed"])
 
@@ -277,3 +281,99 @@ def delete_card(card_id: int, db: Session = Depends(get_db)):
     db.query(CardView).filter(CardView.card_id == card_id).delete()
     db.delete(card)
     db.commit()
+
+
+class TagInput(BaseModel):
+    name: str
+    type: str | None = None
+    role: str | None = None
+    note: str | None = None
+
+
+@router.get("/{card_id}/metadata")
+def card_metadata_endpoint(card_id: int, db: Session = Depends(get_db)):
+    """Ancestry and typed tags for a hover popover.
+
+    Separate from the feed payload rather than inlined: tags are needed on
+    mouse-over for one card, while the feed returns thirty at a time, and
+    joining them into every page would pay for the 29 never hovered.
+    """
+    data = card_metadata(db, card_id)
+    if data is None:
+        raise HTTPException(404, "No such card")
+    return data
+
+
+@router.get("/{card_id}/related")
+def related_cards_endpoint(
+    card_id: int,
+    limit: int = Query(default=8, ge=1, le=30),
+    db: Session = Depends(get_db),
+):
+    """Cards reachable from this one through shared tags."""
+    if db.query(FeedCard.id).filter(FeedCard.id == card_id).first() is None:
+        raise HTTPException(404, "No such card")
+    return {"items": related_cards(db, card_id, limit=limit)}
+
+
+@router.put("/{card_id}/tags")
+def set_tags_endpoint(
+    card_id: int, tags: list[TagInput], db: Session = Depends(get_db),
+):
+    """Replace a card's tags.
+
+    PUT rather than POST: the client sends the list it wants and does not
+    diff against what is stored, so a retry cannot double-apply.
+    """
+    card = db.query(FeedCard).filter(FeedCard.id == card_id).first()
+    if card is None:
+        raise HTTPException(404, "No such card")
+
+    set_card_tags(
+        db, card,
+        [t.model_dump() for t in tags],
+        added_by="user",
+    )
+    db.commit()
+    return card_metadata(db, card_id)
+
+
+@router.get("/tags/browse")
+def browse_tags(
+    tag_type: str | None = None,
+    q: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """The tag vocabulary, for autocomplete and the tag browser.
+
+    Ordered by usage so the common tags surface first, which is what makes
+    autocomplete converge on a shared vocabulary instead of growing
+    synonyms.
+    """
+    query = db.query(ConceptTag)
+    if tag_type and tag_type != "all":
+        query = query.filter(ConceptTag.tag_type == tag_type)
+    if q:
+        query = query.filter(ConceptTag.slug.contains(slugify(q)))
+
+    rows = (
+        query.order_by(ConceptTag.usage_count.desc(), ConceptTag.name)
+        .limit(limit).all()
+    )
+    return {
+        "items": [
+            {
+                "id": t.id,
+                "name": t.name,
+                "slug": t.slug,
+                "type": t.tag_type,
+                "label": TagType.LABELS.get(t.tag_type, "Concept"),
+                "usage_count": t.usage_count,
+            }
+            for t in rows
+        ],
+        "types": [
+            {"value": v, "label": TagType.LABELS[v]} for v in TagType.ALL
+        ],
+    }
