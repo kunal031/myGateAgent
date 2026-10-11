@@ -116,10 +116,16 @@ def _apply_socket_timeout(client: "genai.Client") -> None:
 # stalled request would otherwise exhaust no retries at all.
 try:  # pragma: no cover - import shape depends on the installed httpx
     import httpx
+    from google.genai import errors as _genai_errors
 
     _TRANSIENT: tuple[type[BaseException], ...] = (
         TimeoutError, ConnectionError, httpx.TimeoutException,
         httpx.TransportError,
+        # Google's own 5xx. A 504 DEADLINE_EXCEEDED killed a 524-page
+        # ingest outright: the server gave up on one page, the error was
+        # not retryable, and the whole book was marked failed. These say
+        # "try again", not "this request is wrong".
+        _genai_errors.ServerError,
     )
 except ImportError:
     _TRANSIENT = (TimeoutError, ConnectionError)
