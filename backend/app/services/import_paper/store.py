@@ -8,6 +8,7 @@ confusion weeks later.
 
 import json
 import logging
+import re
 
 from sqlalchemy.orm import Session
 
@@ -18,6 +19,19 @@ logger = logging.getLogger(__name__)
 
 #: MCQ only. MSQ and NAT carry no negative marking in GATE.
 NEGATIVE_MARKS = {1: 0.33, 2: 0.66}
+
+_WHITESPACE = re.compile(r"\s+")
+
+
+def dedupe_key(content: str) -> str:
+    """A question's identity, for spotting one already in the bank.
+
+    Exact content matching is too strict: the same question extracted twice
+    differed by a "Question 3: " prefix and by how whitespace fell, so both
+    copies were stored and a quiz could serve them together. Folding case
+    and whitespace catches those without merging genuinely different stems.
+    """
+    return _WHITESPACE.sub(" ", content).strip().lower()[:300]
 
 
 def negative_for(question_type: str, marks: int) -> float:
@@ -62,6 +76,13 @@ def store_questions(
     """
     stored = skipped = 0
 
+    # Everything already in the bank for this topic, folded for comparison.
+    seen = {
+        dedupe_key(row[0])
+        for row in db.query(Question.content)
+        .filter(Question.topic_id == paper.topic_id).all()
+    }
+
     for item in parsed:
         content = (item.get("content") or "").strip()
         answer = (item.get("correct_answer") or "").strip()
@@ -77,11 +98,13 @@ def store_questions(
             continue
 
         # The same question appears on several pages, and a page can print
-        # one twice. Matching on content keeps the bank free of repeats a
-        # student would answer twice in one quiz.
-        if db.query(Question.id).filter(Question.content == content).first():
+        # one twice. Matching on a folded key rather than exact content
+        # keeps the bank free of repeats a student would meet twice in one
+        # quiz, including ones that differ only by spacing.
+        if dedupe_key(content) in seen:
             skipped += 1
             continue
+        seen.add(dedupe_key(content))
 
         marks = item.get("marks") if item.get("marks") in (1, 2) else 1
 

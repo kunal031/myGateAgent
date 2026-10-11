@@ -84,6 +84,17 @@ _RANGE_ANSWER = re.compile(
     r"^(-?\d+(?:\.\d+)?)\s*(?:to|-|–)\s*(-?\d+(?:\.\d+)?)$", re.I,
 )
 
+#: "Question 12:", "Q.7", "14." at the head of a stem. The page's own
+#: numbering is not part of the question, and carrying it through means the
+#: same question imported twice does not look the same.
+_LEADING_NUMBER = re.compile(
+    r"^\s*(?:Question|Ques|Q)\s*[.:]?\s*\d+\s*[.:)\]]?\s+"
+    # A bare "14." only counts as numbering when whitespace follows, so a
+    # stem opening with a decimal such as "12.5 kbps" keeps its number.
+    r"|^\s*\d{1,3}\s*[.)]\s+",
+    re.I,
+)
+
 _PROMPT = """Extract every exam question from the text below.
 
 Return JSON: {{"questions": [...]}} where each question has:
@@ -120,6 +131,16 @@ def _batches(text: str) -> list[str]:
     if current:
         chunks.append(current)
     return chunks
+
+
+def strip_numbering(content: str) -> str:
+    """Drop a leading question number from a stem.
+
+    The model sometimes keeps the page's numbering and sometimes does not,
+    so the same question extracted twice differed only by a "Question 3: "
+    prefix -- enough to slip past a content match and be stored twice.
+    """
+    return _LEADING_NUMBER.sub("", content, count=1).strip()
 
 
 def infer_type(answer: str, options: list, model_guess: str) -> str:
@@ -171,7 +192,7 @@ def normalise_answer(answer: str, qtype: str) -> tuple[str, float | None, float 
 
 def _clean(item: dict) -> dict | None:
     """Validate and normalise one parsed question."""
-    content = (item.get("content") or "").strip()
+    content = strip_numbering((item.get("content") or "").strip())
     # "Process is" and "Checkpointing a job" are real GATE stems whose
     # meaning lives in the options, so length alone cannot reject one.
     if not content:
