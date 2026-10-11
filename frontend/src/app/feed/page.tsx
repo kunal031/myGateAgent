@@ -7,6 +7,7 @@ import AssistantBar from "@/features/assistant/AssistantBar";
 import ChatPanel from "@/features/assistant/ChatPanel";
 import CardComposer from "@/features/feed/CardComposer";
 import FeedCard from "@/features/feed/FeedCard";
+import FeedHeader from "@/features/feed/FeedHeader";
 import { useHideOnScroll } from "@/features/feed/useHideOnScroll";
 import {
   useInfiniteFeed, useScrollSentinel,
@@ -47,6 +48,8 @@ export default function FeedPage() {
   // lands several seconds later.
   const [explainCard, setExplainCard] = useState<FeedCardItem | null>(null);
   const [explainPending, setExplainPending] = useState(false);
+  // Bumped when a card is recalled, so the header re-reads its counts.
+  const [progressKey, setProgressKey] = useState(0);
   const [language, setLanguage] = useState<AssistantLanguage>("en");
   // "all" or "user": the feed can be narrowed to cards written by hand.
   const [sourceType, setSourceType] = useState("all");
@@ -82,7 +85,9 @@ export default function FeedPage() {
   const handleMastered = useCallback(
     (id: number) => {
       setLeaving((prev) => new Set(prev).add(id));
-      void markCardRecalled(id).catch(() => {});
+      void markCardRecalled(id)
+        .then(() => setProgressKey((n) => n + 1))
+        .catch(() => {});
       window.setTimeout(() => {
         void dismiss(id);
         setLeaving((prev) => {
@@ -251,6 +256,8 @@ export default function FeedPage() {
           </span>
         </div>
       </div>
+
+      <FeedHeader subjectSlug={subjectSlug} refreshKey={progressKey} />
 
       {composerOpen && (
         <CardComposer

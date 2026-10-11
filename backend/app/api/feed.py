@@ -4,6 +4,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..core.database import get_db
@@ -386,4 +387,74 @@ def browse_tags(
         "types": [
             {"value": v, "label": TagType.LABELS[v]} for v in TagType.ALL
         ],
+    }
+
+
+@router.get("/progress")
+def feed_progress(
+    subject_slug: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """Where the student is, for the header above the feed.
+
+    The feed was directionless partly for want of this: a ranked list says
+    nothing about position, so finishing a concept felt like no progress at
+    all.
+    """
+    from ..models.concepts import Concept, ConceptProgress, ConceptStatus
+    from ..services.feed.ordering import _prerequisite_map
+    from ..services.feed.progress import learned_concept_ids
+
+    concepts = db.query(Concept)
+    if subject_slug and subject_slug != "all":
+        subject = db.query(Subject).filter(Subject.slug == subject_slug).first()
+        if subject is None:
+            raise HTTPException(404, f"No subject {subject_slug!r}")
+        concepts = concepts.filter(Concept.subject_id == subject.id)
+    rows = concepts.all()
+
+    learned = learned_concept_ids(db)
+    graph = _prerequisite_map(db)
+    ids = {c.id for c in rows}
+
+    done = len(ids & learned)
+    ready = sum(
+        1 for c in rows
+        if c.id not in learned and all(p in learned for p in graph.get(c.id, []))
+    )
+
+    due = (
+        db.query(CardView)
+        .filter(CardView.due_at.isnot(None), CardView.due_at <= datetime.utcnow())
+        .count()
+    )
+
+    # What to open next: the lowest-sequence ready concept, which is where
+    # the teaching order says to go.
+    nxt = sorted(
+        (c for c in rows
+         if c.id not in learned
+         and all(p in learned for p in graph.get(c.id, []))),
+        key=lambda c: (c.sequence or 0, c.id),
+    )
+    upcoming = nxt[0] if nxt else None
+
+    statuses = dict(
+        db.query(ConceptProgress.status, func.count(ConceptProgress.id))
+        .group_by(ConceptProgress.status).all()
+    )
+
+    return {
+        "concepts_total": len(rows),
+        "concepts_learned": done,
+        "concepts_ready": ready,
+        "cards_due": due,
+        "next_concept": (
+            {"id": upcoming.id, "name": upcoming.name} if upcoming else None
+        ),
+        "statuses": {
+            k: statuses.get(k, 0)
+            for k in (ConceptStatus.LEARNING, ConceptStatus.LEARNED,
+                      ConceptStatus.REVISED, ConceptStatus.MASTERED)
+        },
     }
