@@ -27,9 +27,13 @@ TABLE_ORDER = [
     "subjects", "topics", "concepts",
     "chapters", "syllabus_topics", "subtopics", "syllabus_concepts",
     "sources", "source_chunks",
-    "questions", "feed_cards",
+    # Papers precede questions: a question carries paper_id.
+    "question_papers", "questions", "feed_cards",
+    "concept_tags", "feed_card_tags",
     "attempts", "mistake_registry", "concept_progress",
+    "card_views",
     "exam_sessions", "exam_items",
+    "assistant_threads", "assistant_messages",
 ]
 
 # Postgres rejects a text value in a halfvec column, so the embedding is
@@ -264,6 +268,10 @@ def main() -> None:
                         help="read local Postgres instead of SQLite; required "
                              "to resync a cloud copy, since the SQLite file "
                              "is a stale pre-ingestion backup")
+    parser.add_argument("--from-aiven", action="store_true",
+                        help="pull the cloud copy down into local Postgres; "
+                             "the direction that matters before the trial "
+                             "ends, since the deployed app writes there")
     parser.add_argument("--replace", action="store_true",
                         help="truncate the target's tables first, so a "
                              "populated target is replaced rather than hit "
@@ -271,18 +279,34 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
+    aiven = settings._normalise_dsn(settings.POSTGRESQL_AIVEN_URI)
+    local = settings._normalise_dsn(settings.POSTGRES_URL)
+
+    if args.from_aiven and args.to_aiven:
+        raise SystemExit("Pick one direction: --to-aiven or --from-aiven")
+
     if args.to_aiven:
-        target_url = settings._normalise_dsn(settings.POSTGRESQL_AIVEN_URI)
+        target_url = aiven
         if not target_url:
             raise SystemExit(
                 "POSTGRESQL_AIVEN_URI is not set in backend/.env"
             )
+    elif args.from_aiven:
+        # Pulling the cloud copy home: the deployed app writes to Aiven, so
+        # attempts and progress made there exist nowhere else.
+        if not aiven:
+            raise SystemExit("POSTGRESQL_AIVEN_URI is not set in backend/.env")
+        if not local:
+            raise SystemExit("POSTGRES_URL is not set in backend/.env")
+        target_url = local
     else:
         target_url = args.postgres_url or settings.POSTGRES_URL
 
     source_url = None
-    if args.from_local:
-        source_url = settings._normalise_dsn(settings.POSTGRES_URL)
+    if args.from_aiven:
+        source_url = aiven
+    elif args.from_local:
+        source_url = local
         if not source_url:
             raise SystemExit("POSTGRES_URL is not set in backend/.env")
 
@@ -313,7 +337,7 @@ def main() -> None:
             print(f"  {name:22s} {read:6,} rows"
                   f"{'' if args.dry_run else f' -> {written:,} copied'}")
 
-    if args.from_local:
+    if args.from_local or args.from_aiven:
         vectors = copy_vectors_between_pg(
             source_engine, target_engine, dry_run=args.dry_run)
     else:
