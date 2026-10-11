@@ -29,8 +29,9 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
+from ...data.curriculum import subject_rank, topic_rank
 from ...models.concepts import Concept, ConceptStatus
-from ...models.models import FeedCard, Subject
+from ...models.models import FeedCard, Subject, Topic
 from ...models.rotation import CardView
 from . import progress as progress_service
 
@@ -58,6 +59,15 @@ DUE_BOOST = 18.0
 #: Exam marks matter, but a 15-mark subject should not bury an 8-mark one.
 WEIGHT_SCALE = 1.2
 
+#: How much the study order outranks exam weight. The curriculum is a
+#: dependency order -- Discrete Maths before Algorithms, Digital Logic
+#: before COA -- so a subject that comes later is genuinely harder to learn
+#: now, whatever it is worth in the exam. Sorting by marks alone put
+#: General Aptitude, which depends on nothing, ahead of the maths that
+#: Algorithms needs.
+CURRICULUM_STEP = 6.0
+TOPIC_STEP = 1.5
+
 
 @dataclass
 class ScoredCard:
@@ -67,6 +77,9 @@ class ScoredCard:
     score: float
     ready: bool
     due: bool
+    #: Position in the study order, for grouping the page by what is
+    #: currently being studied rather than by raw score.
+    curriculum_rank: tuple[int, int] = (0, 0)
 
 
 def _prerequisite_map(db: Session) -> dict[int, list[int]]:
@@ -89,12 +102,12 @@ def _prerequisite_map(db: Session) -> dict[int, list[int]]:
 
 def score_cards(
     db: Session,
-    rows: list[tuple[FeedCard, Subject, Concept | None, int]],
+    rows: list[tuple[FeedCard, Subject, Topic, Concept | None, int]],
 ) -> list[ScoredCard]:
     """Score candidate cards by how worth showing they are right now.
 
-    `rows` carries the card with its subject, concept and recent-mistake
-    count, so this does no further queries per card.
+    `rows` carries the card with its subject, topic, concept and
+    recent-mistake count, so this does no further queries per card.
     """
     graph = _prerequisite_map(db)
     learned = progress_service.learned_concept_ids(db)
@@ -110,8 +123,16 @@ def score_cards(
     now = datetime.utcnow()
     scored: list[ScoredCard] = []
 
-    for card, subject, concept, mistakes in rows:
-        score = float(subject.weightage_marks or 1) * WEIGHT_SCALE
+    for card, subject, topic, concept, mistakes in rows:
+        # The study order dominates. A subject that comes later in the
+        # curriculum is harder to learn now because its prerequisites are
+        # unlearned, whatever it is worth in the exam.
+        s_rank = subject_rank(subject.slug)
+        t_rank = topic_rank(subject.slug, topic.slug) if topic else 0
+        rank = (s_rank, t_rank)
+
+        score = -s_rank * CURRICULUM_STEP - t_rank * TOPIC_STEP
+        score += float(subject.weightage_marks or 1) * WEIGHT_SCALE
         score += float(card.base_weight or 1)
         score += mistakes * ESCALATION_BOOST
 
@@ -136,7 +157,9 @@ def score_cards(
                 score -= (concept.sequence or 0) * 0.1
                 score -= (card.sequence or 0) * 0.05
 
-        scored.append(ScoredCard(card, subject, concept, score, ready, due))
+        scored.append(
+            ScoredCard(card, subject, concept, score, ready, due, rank),
+        )
 
     scored.sort(key=lambda s: -s.score)
     return scored
@@ -222,7 +245,23 @@ def build_page(scored: list[ScoredCard], limit: int) -> list[ScoredCard]:
             if item.card.id in used:
                 continue
             by_subject.setdefault(item.subject.id, []).append(item)
-        queues = list(by_subject.values())
+        # Each subject's queue stays in curriculum order, so rotating
+        # across subjects still hands out earlier topics before later ones.
+        for queue in by_subject.values():
+            queue.sort(key=lambda s: (s.curriculum_rank, -s.score))
+
+        # A single-subject view has nothing to rotate between, and
+        # alternating would only scramble the teaching order.
+        if len(by_subject) == 1:
+            queues = list(by_subject.values())
+        else:
+            queues = [
+                by_subject[k] for k in sorted(
+                    by_subject,
+                    key=lambda k: by_subject[k][0].curriculum_rank,
+                )
+            ]
+
         while remaining > 0 and queues:
             for queue in list(queues):
                 if remaining <= 0:

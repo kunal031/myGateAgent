@@ -73,7 +73,7 @@ def _ready_ordered_rows(db, query, *, offset: int, limit: int):
 
     scored = score_cards(
         db,
-        [(card, subject, concepts.get(card.concept_id), int(errors or 0))
+        [(card, subject, topic, concepts.get(card.concept_id), int(errors or 0))
          for card, subject, topic, errors, _weight in pool],
     )
     page = build_page(scored, offset + limit)[offset:offset + limit]
