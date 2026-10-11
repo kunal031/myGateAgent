@@ -1,8 +1,19 @@
-"""Import a question paper from a URL or a PDF, and manage what it created."""
+"""Import a question paper from a URL or a PDF, and manage what it created.
+
+Importing is slow -- fetching, then a model pass to structure the questions,
+then up to three model calls per question to write a solution. Minutes, for
+a paper of any size. So the endpoints that start that work return as soon as
+the paper row exists, and the work continues in a background thread.
+
+Progress lives on the paper row itself (`import_status`, `import_error`,
+`progress_done`/`progress_total`) rather than in memory, so a client can
+close the page, reload, and still see where its import got to.
+"""
 
 import json
 import logging
 import tempfile
+import threading
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -51,11 +62,15 @@ class QuestionEdit(BaseModel):
 EXPLAIN_CONCURRENCY = 6
 
 
-def _explain_all(questions: list[dict], *, subject_id: int) -> None:
+def _explain_all(
+    db: Session, paper: QuestionPaper, questions: list[dict], *, subject_id: int,
+) -> None:
     """Fill in missing explanations in parallel, in place.
 
     Each worker opens its own session: a SQLAlchemy Session is not safe to
     share across threads, and the corpus lookup inside explain() queries.
+    Progress is written to the paper as each one lands, so the client sees
+    movement rather than a spinner for several minutes.
     """
     from concurrent.futures import ThreadPoolExecutor
 
@@ -65,7 +80,11 @@ def _explain_all(questions: list[dict], *, subject_id: int) -> None:
     if not pending:
         return
 
+    done = 0
+    lock = threading.Lock()
+
     def run(item: dict) -> None:
+        nonlocal done
         worker = SessionLocal()
         try:
             result = explain(
@@ -74,8 +93,14 @@ def _explain_all(questions: list[dict], *, subject_id: int) -> None:
             )
             item["explanation"] = result["explanation"]
             item["solution_source"] = result["solution_source"]
+        except Exception:
+            logger.exception("Could not explain a question")
         finally:
             worker.close()
+        with lock:
+            done += 1
+            paper.progress_done = done
+            db.commit()
 
     with ThreadPoolExecutor(max_workers=EXPLAIN_CONCURRENCY) as pool:
         list(pool.map(run, pending))
@@ -97,6 +122,9 @@ def _paper_dict(paper: QuestionPaper) -> dict:
         "question_count": paper.question_count,
         "import_status": paper.import_status,
         "import_error": paper.import_error,
+        "progress_done": paper.progress_done,
+        "progress_total": paper.progress_total,
+        "progress_note": paper.progress_note or "",
         "created_at": paper.created_at.isoformat() if paper.created_at else None,
     }
 
@@ -138,22 +166,67 @@ def _fail(db: Session, paper: QuestionPaper, message: str) -> None:
     db.commit()
 
 
-def _finish_parse(db: Session, paper: QuestionPaper, text: str) -> dict:
-    """Parse, store the preview, and return it."""
+def _run_in_background(fn, *args) -> None:
+    """Run `fn` on its own thread with its own database session.
+
+    A daemon thread rather than a task queue: this is a single-user study
+    app with no broker to run, and the work is already recoverable from the
+    paper row if the process dies mid-import.
+    """
+    import threading
+
+    from ..core.database import SessionLocal
+
+    def runner() -> None:
+        worker = SessionLocal()
+        try:
+            fn(worker, *args)
+        except Exception:
+            logger.exception("Background import failed")
+        finally:
+            worker.close()
+
+    threading.Thread(target=runner, daemon=True).start()
+
+
+def _note(db: Session, paper: QuestionPaper, note: str,
+          *, done: int | None = None, total: int | None = None) -> None:
+    """Record what the import is doing, for the client's progress display."""
+    paper.progress_note = note[:120]
+    if done is not None:
+        paper.progress_done = done
+    if total is not None:
+        paper.progress_total = total
+    db.commit()
+
+
+def _parse_in_background(db: Session, paper_id: int, text: str) -> None:
+    """Structure the fetched text into questions, then wait for review."""
+    paper = db.query(QuestionPaper).filter(QuestionPaper.id == paper_id).first()
+    if paper is None:
+        return
+
+    _note(db, paper, "Reading the questions")
     try:
         parsed = parse_questions(text)
     except Exception as exc:
-        logger.exception("Parsing failed for paper %s", paper.id)
+        logger.exception("Parsing failed for paper %s", paper_id)
         _fail(db, paper, f"Could not read questions: {exc}")
-        raise HTTPException(422, "Could not read any questions from that source")
+        return
 
     if not parsed:
-        _fail(db, paper, "No questions found")
-        raise HTTPException(
-            422,
+        _fail(
+            db, paper,
             "No questions found there. The page may need signing in, or "
             "render its questions with JavaScript.",
         )
+        return
+
+    _finish_parse(db, paper, parsed)
+
+
+def _finish_parse(db: Session, paper: QuestionPaper, parsed: list[dict]) -> dict:
+    """Store the parsed preview against the paper."""
 
     # Label the paper from what the questions actually said.
     years = [q["exam_year"] for q in parsed if q.get("exam_year")]
@@ -166,6 +239,8 @@ def _finish_parse(db: Session, paper: QuestionPaper, text: str) -> dict:
     paper.preview_json = json.dumps(parsed)
     paper.question_count = len(parsed)
     paper.import_status = ImportStatus.PREVIEW
+    paper.progress_note = ""
+    paper.progress_done = paper.progress_total = 0
     db.commit()
     db.refresh(paper)
 
@@ -204,17 +279,24 @@ def import_from_url(payload: UrlImportRequest, db: Session = Depends(get_db)):
         topic_slug=payload.topic_slug, source_kind=PaperSource.URL,
         origin_url=payload.url,
     )
-    try:
-        page = fetch_url(payload.url)
-    except FetchError as exc:
-        _fail(db, paper, str(exc))
-        raise HTTPException(422, str(exc)) from exc
+    def work(worker: Session, paper_id: int) -> None:
+        row = worker.query(QuestionPaper).filter(
+            QuestionPaper.id == paper_id).first()
+        if row is None:
+            return
+        _note(worker, row, "Fetching the page")
+        try:
+            page = fetch_url(payload.url)
+        except FetchError as exc:
+            _fail(worker, row, str(exc))
+            return
+        if not payload.name and page.get("title"):
+            row.name = page["title"][:250]
+            worker.commit()
+        _parse_in_background(worker, paper_id, page["text"])
 
-    if not payload.name and page.get("title"):
-        paper.name = page["title"][:250]
-        db.commit()
-
-    return _finish_parse(db, paper, page["text"])
+    _run_in_background(work, paper.id)
+    return {"paper": _paper_dict(paper), "queued": True}
 
 
 @router.post("/import/upload")
@@ -243,29 +325,39 @@ async def import_from_pdf(
         file_name=file.filename or "upload.pdf",
     )
 
-    # Written to disk because the extractor works on a path, and deleted
-    # straight after: a question paper is parsed once, not kept as corpus.
-    from ..services.ingestion.extract import extract_pdf_pages
+    def work(worker: Session, paper_id: int) -> None:
+        # Written to disk because the extractor works on a path, and
+        # deleted straight after: a question paper is parsed once into
+        # rows, not kept as corpus.
+        from ..services.ingestion.extract import extract_pdf_pages
 
-    tmp = Path(tempfile.gettempdir()) / f"paper-{paper.id}.pdf"
-    try:
-        tmp.write_bytes(raw)
-        pages = extract_pdf_pages(tmp, f"paper-{paper.id}")
-        text = "\n\n".join(p["text"] for p in pages)
-    except Exception as exc:
-        logger.exception("PDF extraction failed for paper %s", paper.id)
-        _fail(db, paper, f"Could not read that PDF: {exc}")
-        raise HTTPException(422, "Could not read that PDF") from exc
-    finally:
-        tmp.unlink(missing_ok=True)
+        row = worker.query(QuestionPaper).filter(
+            QuestionPaper.id == paper_id).first()
+        if row is None:
+            return
 
-    if len(text.strip()) < 200:
-        _fail(db, paper, "The PDF has no readable text")
-        raise HTTPException(
-            422, "That PDF has no readable text. It may be a scan.",
-        )
+        _note(worker, row, "Reading the PDF")
+        tmp = Path(tempfile.gettempdir()) / f"paper-{paper_id}.pdf"
+        try:
+            tmp.write_bytes(raw)
+            pages = extract_pdf_pages(tmp, f"paper-{paper_id}")
+            text = "\n\n".join(p["text"] for p in pages)
+        except Exception as exc:
+            logger.exception("PDF extraction failed for paper %s", paper_id)
+            _fail(worker, row, f"Could not read that PDF: {exc}")
+            return
+        finally:
+            tmp.unlink(missing_ok=True)
 
-    return _finish_parse(db, paper, text)
+        if len(text.strip()) < 200:
+            _fail(worker, row,
+                  "That PDF has no readable text. It may be a scan.")
+            return
+
+        _parse_in_background(worker, paper_id, text)
+
+    _run_in_background(work, paper.id)
+    return {"paper": _paper_dict(paper), "queued": True}
 
 
 @router.post("/{paper_id}/confirm")
@@ -287,16 +379,72 @@ def confirm_import(
     if not questions:
         raise HTTPException(400, "There is nothing to import")
 
-    if payload.generate_explanations:
-        _explain_all(questions, subject_id=paper.subject_id)
-
-    provenance = paper.origin_url or f"{paper.file_name} (uploaded)"
-    counts = store_questions(db, paper, questions, provenance=provenance)
-
-    paper.preview_json = ""
+    paper.import_status = ImportStatus.SAVING
+    paper.progress_done = 0
+    paper.progress_total = len(questions)
+    paper.progress_note = (
+        "Writing solutions" if payload.generate_explanations else "Saving"
+    )
     db.commit()
+    db.refresh(paper)
 
-    return {"paper": _paper_dict(paper), **counts}
+    def work(worker: Session, paper_id: int) -> None:
+        row = worker.query(QuestionPaper).filter(
+            QuestionPaper.id == paper_id).first()
+        if row is None:
+            return
+        try:
+            if payload.generate_explanations:
+                _explain_all(
+                    worker, row, questions, subject_id=row.subject_id,
+                )
+            _note(worker, row, "Saving questions")
+            provenance = row.origin_url or f"{row.file_name} (uploaded)"
+            store_questions(worker, row, questions, provenance=provenance)
+            row.preview_json = ""
+            row.progress_note = ""
+            worker.commit()
+        except Exception as exc:
+            logger.exception("Confirm failed for paper %s", paper_id)
+            _fail(worker, row, f"Could not save those questions: {exc}")
+
+    _run_in_background(work, paper.id)
+    return {"paper": _paper_dict(paper), "queued": True}
+
+
+@router.get("/{paper_id}/status")
+def paper_status(paper_id: int, db: Session = Depends(get_db)):
+    """Just the progress fields, for polling while an import runs.
+
+    Separate from GET /{id}, which returns every question: polling that once
+    a second would send the whole paper back each time.
+    """
+    paper = db.query(QuestionPaper).filter(QuestionPaper.id == paper_id).first()
+    if paper is None:
+        raise HTTPException(404, "No such paper")
+    return {
+        "id": paper.id,
+        "import_status": paper.import_status,
+        "import_error": paper.import_error,
+        "progress_done": paper.progress_done,
+        "progress_total": paper.progress_total,
+        "progress_note": paper.progress_note or "",
+        "question_count": paper.question_count,
+    }
+
+
+@router.get("/{paper_id}/preview")
+def paper_preview(paper_id: int, db: Session = Depends(get_db)):
+    """The parsed questions awaiting review.
+
+    Held on the paper rather than in the response to the import call, so
+    closing the page mid-parse does not lose the work it paid for.
+    """
+    paper = db.query(QuestionPaper).filter(QuestionPaper.id == paper_id).first()
+    if paper is None:
+        raise HTTPException(404, "No such paper")
+    parsed = json.loads(paper.preview_json or "[]")
+    return _preview(paper, parsed)
 
 
 @router.get("/{paper_id}")

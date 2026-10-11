@@ -38,8 +38,9 @@ class ImportStatus:
     what was found and supplied any missing answers.
     """
 
-    PARSING = "parsing"
-    PREVIEW = "preview"
+    PARSING = "parsing"       # fetching and structuring the questions
+    PREVIEW = "preview"       # parsed, waiting for the student to confirm
+    SAVING = "saving"         # confirmed; writing solutions and rows
     COMPLETE = "complete"
     FAILED = "failed"
 
@@ -72,6 +73,14 @@ class QuestionPaper(Base):
         String(20), default=ImportStatus.PARSING, nullable=False, index=True,
     )
     import_error = Column(Text, default="")
+
+    #: How far a background import has got. Stored rather than held in
+    #: memory so the page can be closed and reopened mid-import, and so a
+    #: restart leaves evidence of what was running.
+    progress_done = Column(Integer, default=0, nullable=False)
+    progress_total = Column(Integer, default=0, nullable=False)
+    #: What it is doing right now, in words the student can read.
+    progress_note = Column(String(120), default="")
 
     #: The parsed questions before they are confirmed, as JSON. Held here so
     #: a preview survives a page reload and the parse is not paid for twice.
