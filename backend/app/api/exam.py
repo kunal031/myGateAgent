@@ -256,6 +256,9 @@ def _session_summary(session: ExamSession) -> dict:
     return {
         "id": session.id,
         "name": session.name,
+        # Quiz or test. The client types this field but the summary never
+        # sent it, so a runner could not tell which mode it was in.
+        "kind": session.kind,
         "pattern": session.pattern,
         "status": session.status,
         "total_questions": session.total_questions,
@@ -274,42 +277,4 @@ def _session_summary(session: ExamSession) -> dict:
         "unattempted_count": session.unattempted_count,
         "accuracy": session.accuracy,
         "shortfall_note": session.shortfall_note or "",
-    }
-
-
-@router.post("/{session_id}/check/{position}")
-def check_answer(session_id: int, position: int, db: Session = Depends(get_db)):
-    """Grade one question immediately. Quiz sessions only.
-
-    This is the difference between the two modes: a quiz gives feedback as
-    you go, so the explanation lands while the question is still in mind. A
-    test reveals nothing until submission, so this refuses for them.
-    """
-    from ..models.exams import ExamItem, SessionKind
-    from ..services.exam.scoring import score_item
-
-    session = _require_session(db, session_id)
-    if session.kind != SessionKind.QUIZ:
-        raise HTTPException(409, "Immediate feedback is only available in a quiz")
-
-    item = (
-        db.query(ExamItem)
-        .filter(ExamItem.session_id == session_id, ExamItem.position == position)
-        .first()
-    )
-    if item is None:
-        raise HTTPException(404, "No such question in this session")
-    if not item.user_answer:
-        raise HTTPException(409, "Answer the question first")
-
-    question = item.question
-    is_correct, marks = score_item(question, item.user_answer)
-
-    return {
-        "position": item.position,
-        "is_correct": is_correct,
-        "marks_obtained": marks,
-        "correct_answer": question.correct_answer,
-        "explanation": question.explanation,
-        "provenance": question.provenance or "",
     }
