@@ -11,6 +11,7 @@ from ..models.concepts import Concept
 from ..models.models import FeedCard, Subject, Topic
 from ..models.tags import ConceptTag, TagType
 from ..models.rotation import CardView
+from ..services.feed.progress import record_card_recalled, record_card_seen
 from ..services.feed.ranking import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, get_feed_page
 from ..services.feed.tagging import (
     card_metadata, related_cards, set_card_tags, slugify,
@@ -65,12 +66,14 @@ def _view_for(db: Session, card_id: int) -> CardView:
 @router.post("/cards/{card_id}/seen")
 def mark_seen(card_id: int, db: Session = Depends(get_db)):
     """Record that a card was shown, without claiming it was learned."""
-    if db.query(FeedCard).filter(FeedCard.id == card_id).first() is None:
+    card = db.query(FeedCard).filter(FeedCard.id == card_id).first()
+    if card is None:
         raise HTTPException(404, "No such card")
 
     view = _view_for(db, card_id)
     view.seen_count = (view.seen_count or 0) + 1
     view.last_seen_at = datetime.utcnow()
+    record_card_seen(db, card)
     db.commit()
     return {"card_id": card_id, "seen_count": view.seen_count}
 
@@ -78,17 +81,24 @@ def mark_seen(card_id: int, db: Session = Depends(get_db)):
 @router.post("/cards/{card_id}/recall")
 def mark_recalled(card_id: int, db: Session = Depends(get_db)):
     """Marked "got it": schedule the next review further out."""
-    if db.query(FeedCard).filter(FeedCard.id == card_id).first() is None:
+    card = db.query(FeedCard).filter(FeedCard.id == card_id).first()
+    if card is None:
         raise HTTPException(404, "No such card")
 
     view = _view_for(db, card_id)
     view.record_recall()
+    # The recall has to land before the concept is re-evaluated, since
+    # "learned" means every card in it has been recalled and this one has
+    # only just become true.
+    db.flush()
+    state = record_card_recalled(db, card)
     db.commit()
     return {
         "card_id": card_id,
         "recall_count": view.recall_count,
         "mastered": view.mastered,
         "due_at": view.due_at.isoformat() if view.due_at else None,
+        "concept_status": state.status if state else None,
     }
 
 

@@ -43,6 +43,48 @@ def _mistake_weight_subquery():
     )
 
 
+#: How much of the bank to score before laying out a page. Scoring is
+#: in-process arithmetic over rows already fetched, so this is cheap; the
+#: cap exists so the cost stays flat as the library grows.
+SCORING_POOL = 400
+
+
+def _ready_ordered_rows(db, query, *, offset: int, limit: int):
+    """Score a pool of candidates, then lay out one page as a mix.
+
+    Paging is applied after scoring rather than in SQL: the mix is a
+    property of the page, and an OFFSET over a ranked list would cut
+    through it.
+    """
+    from .ordering import build_page, score_cards
+
+    pool = query.limit(SCORING_POOL + offset).all()
+    if not pool:
+        return []
+
+    # FeedCard has no concept relationship, so the concepts are fetched in
+    # one query and joined here. Reaching for card.concept would quietly
+    # yield None for every card and switch readiness off without a word.
+    concept_ids = {c.concept_id for c, *_ in pool if c.concept_id}
+    concepts = {
+        c.id: c
+        for c in db.query(Concept).filter(Concept.id.in_(concept_ids)).all()
+    } if concept_ids else {}
+
+    scored = score_cards(
+        db,
+        [(card, subject, concepts.get(card.concept_id), int(errors or 0))
+         for card, subject, topic, errors, _weight in pool],
+    )
+    page = build_page(scored, offset + limit)[offset:offset + limit]
+
+    chosen = {s.card.id for s in page}
+    ordered = {s.card.id: i for i, s in enumerate(page)}
+    rows = [r for r in pool if r[0].id in chosen]
+    rows.sort(key=lambda r: ordered.get(r[0].id, 0))
+    return rows
+
+
 def get_feed_page(
     db: Session,
     *,
@@ -97,11 +139,15 @@ def get_feed_page(
 
     if mode == StudyMode.BASIC:
         # Teaching order: concept sequence, then card sequence within it.
+        # BASIC is the one mode that should march in order, so it keeps the
+        # strict walk rather than the mixed page below.
         ordering = (Concept.sequence.asc(), FeedCard.sequence.asc(), FeedCard.id.asc())
+        rows = query.order_by(*ordering).offset(offset).limit(limit).all()
     else:
-        ordering = (weight.desc(), FeedCard.id.asc())
-
-    rows = query.order_by(*ordering).offset(offset).limit(limit).all()
+        # Everything else is ordered by readiness and laid out as a mix.
+        # Sorting by weight put 654 of 659 cards at the same score, so the
+        # feed fell back to id order -- the order they were generated in.
+        rows = _ready_ordered_rows(db, query, offset=offset, limit=limit)
 
     items = [
         {
