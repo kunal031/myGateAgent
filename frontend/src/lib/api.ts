@@ -473,26 +473,6 @@ export async function fetchExamHistory(
   return res.json();
 }
 
-export interface CheckResponse {
-  position: number;
-  is_correct: boolean;
-  marks_obtained: number;
-  correct_answer: string;
-  explanation: string;
-  provenance: string;
-}
-
-/** Grade one question mid-quiz. Quiz sessions only. */
-export async function checkQuizAnswer(
-  sessionId: number,
-  position: number,
-): Promise<CheckResponse> {
-  const res = await fetch(`${API_BASE}/api/exam/${sessionId}/check/${position}`, {
-    method: "POST",
-  });
-  if (!res.ok) throw new Error((await res.json()).detail ?? "Could not check answer");
-  return res.json();
-}
 
 export interface SolutionResponse {
   question_id: number;
