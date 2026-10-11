@@ -29,6 +29,11 @@ study notes into Markdown.
 EMPTY_MARKER = "EMPTY_PAGE"
 RENDER_DPI = 150
 
+# Parallel vision calls. Each is a round trip of a couple of seconds, so a
+# 737-page scan transcribed one at a time spends almost half an hour
+# waiting on the network.
+VISION_CONCURRENCY = 10
+
 # Below this average line length, a text layer is shattered rather than
 # readable and the page is better transcribed from the image.
 MIN_AVG_LINE_CHARS = 20
@@ -84,13 +89,17 @@ def _cache_path(content_hash: str, page_number: int) -> Path:
     return settings.TRANSCRIPT_CACHE_DIR / content_hash / f"p{page_number:04d}.md"
 
 
-def transcribe_page(page, content_hash: str, page_number: int) -> str:
-    """Vision-transcribe one page, reading and writing the on-disk cache."""
+def transcribe_png(png: bytes, content_hash: str, page_number: int) -> str:
+    """Vision-transcribe one rendered page, via the on-disk cache.
+
+    Takes the rendered bytes rather than a page object so callers can
+    rasterise on one thread -- pymupdf pages are not safe to share -- and
+    make the network calls on several.
+    """
     cached = _cache_path(content_hash, page_number)
     if cached.exists():
         return cached.read_text(encoding="utf-8")
 
-    png = page.get_pixmap(dpi=RENDER_DPI).tobytes("png")
     text = ai_client.transcribe_image(png, TRANSCRIBE_PROMPT)
 
     cached.parent.mkdir(parents=True, exist_ok=True)
@@ -113,6 +122,15 @@ def file_has_text_layer(doc, *, samples: int = 5) -> bool:
     return usable >= max(1, len(indexes) // 2)
 
 
+def transcribe_page(page, content_hash: str, page_number: int) -> str:
+    """Vision-transcribe one page object. Kept for single-page callers."""
+    cached = _cache_path(content_hash, page_number)
+    if cached.exists():
+        return cached.read_text(encoding="utf-8")
+    png = page.get_pixmap(dpi=RENDER_DPI).tobytes("png")
+    return transcribe_png(png, content_hash, page_number)
+
+
 def extract_pdf_pages(
     path: Path, content_hash: str, *, max_pages: int | None = None
 ) -> list[dict]:
@@ -123,7 +141,11 @@ def extract_pdf_pages(
     six seconds of quota to transcribe a cover page is waste -- Cormen's
     first forty pages alone would cost forty calls.
     """
+    from concurrent.futures import ThreadPoolExecutor
+
     pages: list[dict] = []
+    pending: list[tuple[int, bytes]] = []
+
     doc = pymupdf.open(path)
     try:
         has_text_layer = file_has_text_layer(doc)
@@ -133,15 +155,39 @@ def extract_pdf_pages(
             number = index + 1
 
             if page_has_usable_text(page):
-                text, method = page.get_text("text").strip(), "DIRECT"
+                text = sanitise(_NOISE.sub("", page.get_text("text").strip())).strip()
+                if text and EMPTY_MARKER not in text:
+                    pages.append(
+                        {"page_number": number, "text": text, "method": "DIRECT"},
+                    )
             elif has_text_layer:
                 continue  # front matter or a figure; not worth a vision call
             else:
-                text, method = transcribe_page(page, content_hash, number), "VISION"
-
-            text = sanitise(_NOISE.sub("", text)).strip()
-            if text and EMPTY_MARKER not in text:
-                pages.append({"page_number": number, "text": text, "method": method})
+                # Rasterise here, on the one thread that may touch the
+                # document, and transcribe in parallel below. A scanned book
+                # is hundreds of pages, and one round trip at a time spends
+                # the whole run waiting on the network.
+                if not _cache_path(content_hash, number).exists():
+                    pending.append(
+                        (number, page.get_pixmap(dpi=RENDER_DPI).tobytes("png")),
+                    )
+                else:
+                    pending.append((number, b""))
     finally:
         doc.close()
+
+    if pending:
+        def run(item: tuple[int, bytes]) -> tuple[int, str]:
+            number, png = item
+            return number, transcribe_png(png, content_hash, number)
+
+        with ThreadPoolExecutor(max_workers=VISION_CONCURRENCY) as pool:
+            for number, raw in pool.map(run, pending):
+                text = sanitise(_NOISE.sub("", raw)).strip()
+                if text and EMPTY_MARKER not in text:
+                    pages.append(
+                        {"page_number": number, "text": text, "method": "VISION"},
+                    )
+        pages.sort(key=lambda p: p["page_number"])
+
     return pages
