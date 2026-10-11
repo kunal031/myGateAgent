@@ -2,11 +2,14 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Play, Target, Plus } from "lucide-react";
+import { Play, Target, Plus, Loader2 } from "lucide-react";
 
 import SessionHistory from "@/features/exam/SessionHistory";
 import PaperImporter from "@/features/papers/PaperImporter";
 import { QuestionPaper, fetchPapers } from "@/lib/papers";
+
+/** Imports that have not finished, and can be reopened from the quiz page. */
+const UNFINISHED = new Set(["parsing", "preview", "saving"]);
 import {
   ExamPatterns, SubjectItem, fetchExamPatterns, fetchSyllabus, startExam,
 } from "@/lib/api";
@@ -33,6 +36,11 @@ export default function QuizPage() {
   const [papers, setPapers] = useState<QuestionPaper[]>([]);
   const [paperId, setPaperId] = useState("all");
   const [importing, setImporting] = useState(false);
+  // Which paper the importer reopens, if it is resuming one.
+  const [resumeId, setResumeId] = useState<number | null>(null);
+  // Imports still running or waiting for review, across every subject, so
+  // closing the dialog does not lose the way back to them.
+  const [unfinished, setUnfinished] = useState<QuestionPaper[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -67,6 +75,24 @@ export default function QuizPage() {
       .catch(() => {});
     return () => { cancelled = true; };
   }, [subject, topic, paperNonce]);
+
+  // Unfinished imports are listed across all subjects, since one started
+  // under a different subject is still worth finishing. Re-polled while any
+  // is in flight so the banner reflects where it has got to.
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      fetchPapers()
+        .then((rows) => {
+          if (cancelled) return;
+          setUnfinished(rows.filter((p) => UNFINISHED.has(p.import_status)));
+        })
+        .catch(() => {});
+    };
+    load();
+    const timer = window.setInterval(load, 5000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [paperNonce]);
 
   /** Re-read the per-subject question counts after an import changes them. */
   const refreshPatterns = useCallback(async () => {
@@ -289,10 +315,53 @@ export default function QuizPage() {
         )}
       </section>
 
+      {unfinished.length > 0 && !importing && (
+        <section className="space-y-2">
+          {unfinished.map((p) => {
+            const waiting = p.import_status === "preview";
+            const progress = p.progress_total > 0
+              ? ` ${p.progress_done}/${p.progress_total}`
+              : "";
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => { setResumeId(p.id); setImporting(true); }}
+                className="flex w-full items-center gap-2 rounded-[var(--radius)] px-3 py-2.5 text-left"
+                style={{
+                  background: waiting ? "var(--warning)" : "var(--surface)",
+                  border: "var(--line-width) solid var(--line)",
+                  color: "var(--ink)",
+                }}
+              >
+                {waiting
+                  ? <Target className="h-4 w-4 shrink-0" />
+                  : <Loader2 className="h-4 w-4 shrink-0 animate-spin" />}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[12px] font-bold">
+                    {p.name}
+                  </span>
+                  <span className="block text-[11px] font-semibold"
+                        style={{ color: "var(--ink-faint)" }}>
+                    {waiting
+                      ? `${p.question_count} questions found — review and save`
+                      : `${p.progress_note || "Working"}${progress}`}
+                  </span>
+                </span>
+                <span className="shrink-0 text-[11px] font-bold">
+                  {waiting ? "Review" : "View"}
+                </span>
+              </button>
+            );
+          })}
+        </section>
+      )}
+
       {importing && (
         <PaperImporter
           subjects={syllabus}
-          onClose={() => setImporting(false)}
+          resumePaperId={resumeId}
+          onClose={() => { setImporting(false); setResumeId(null); }}
           onImported={() => { reloadPapers(); void refreshPatterns(); }}
         />
       )}

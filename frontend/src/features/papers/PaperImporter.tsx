@@ -19,6 +19,8 @@ interface Props {
   onClose: () => void;
   /** Fired once questions are stored, so the caller can refresh its lists. */
   onImported: (stored: number) => void;
+  /** Reopen an import already under way, instead of starting a new one. */
+  resumePaperId?: number | null;
 }
 
 type Step = "source" | "working" | "review" | "saving";
@@ -32,8 +34,10 @@ type Step = "source" | "working" | "review" | "saving";
  * right, surfacing weeks later as confusion. Anything the source did not
  * answer is flagged and blocks saving until it is filled in.
  */
-export default function PaperImporter({ subjects, onClose, onImported }: Props) {
-  const [step, setStep] = useState<Step>("source");
+export default function PaperImporter({
+  subjects, onClose, onImported, resumePaperId = null,
+}: Props) {
+  const [step, setStep] = useState<Step>(resumePaperId ? "working" : "source");
 
   const [subjectSlug, setSubjectSlug] = useState("");
   const [topicSlug, setTopicSlug] = useState("");
@@ -50,7 +54,7 @@ export default function PaperImporter({ subjects, onClose, onImported }: Props) 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   // The import runs on the server; this is the last progress it reported.
-  const [paperId, setPaperId] = useState<number | null>(null);
+  const [paperId, setPaperId] = useState<number | null>(resumePaperId);
   const [progress, setProgress] = useState<PaperProgress | null>(null);
 
   // Topics come from the syllabus payload and grow when one is added here.
@@ -96,6 +100,8 @@ export default function PaperImporter({ subjects, onClose, onImported }: Props) 
           return;
         }
         if (status.import_status === "preview") {
+          // Reached either by finishing a parse or by reopening an import
+          // left at the review step.
           const found = await fetchPaperPreview(paperId);
           if (cancelled) return;
           setPreview(found);
@@ -107,6 +113,7 @@ export default function PaperImporter({ subjects, onClose, onImported }: Props) 
         if (status.import_status === "complete") {
           onImported(status.question_count);
           onClose();
+          return;
         }
       } catch {
         // A dropped poll is not a failed import; the next one retries.
