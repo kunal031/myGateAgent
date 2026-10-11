@@ -188,6 +188,29 @@ is a consistent snapshot.
 
 ---
 
+## A subject generates no cards
+
+Almost always a missing corpus, not a broken generator. Check in this order:
+
+```bash
+# 1. Does the subject have chunks at all?
+psql -d gatemaster -c "SELECT s.slug, count(sc.id) FROM subjects s
+  LEFT JOIN source_chunks sc ON sc.subject_id = s.id GROUP BY 1 ORDER BY 2"
+
+# 2. Are they embedded? Unembedded chunks are invisible to retrieval.
+./venv/bin/python -m app.cli.index --status
+
+# 3. Is a book for it sitting un-ingested?
+ls data/inbox/books/<subject-slug>/
+```
+
+Compiler Design sat at zero cards for weeks because the dragon book had
+never been ingested -- it is a scan, so `--free-only` skipped it every
+time, and nothing reported the omission. Ingesting it took the subject from
+0 to 15 cards in one pass.
+
+---
+
 ## Check state
 
 ```bash
