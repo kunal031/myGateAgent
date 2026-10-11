@@ -114,13 +114,16 @@ def generate_grounded(
     *,
     model: str = models.PRIMARY,
     temperature: float = 0.2,
+    interactive: bool = False,
 ) -> dict:
     """Generate with Google Search grounding.
 
     Returns the text plus the cited sources, so web-derived content can
     always be traced back to a URL.
     """
-    search_limiter.acquire()
+    # Grounded calls have their own daily budget, but a request someone is
+    # waiting on must not queue behind a batch of them either.
+    (interactive_limiter if interactive else search_limiter).acquire()
 
     response = get_client().models.generate_content(
         model=model,
