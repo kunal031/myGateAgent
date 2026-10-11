@@ -121,6 +121,41 @@ push below.
 
 ---
 
+## Deploying, and surviving the Aiven trial
+
+Three copies, one of which expires. The rule: **local Postgres is the
+source of truth, and the cloud is a copy that can be thrown away.**
+
+```
+  local Postgres  ──push──>  Aiven  ──serves──>  deployed app
+        ^                      │
+        └────────pull──────────┘   (before the trial ends)
+```
+
+The deployed app writes to Aiven: attempts, quiz sessions, card views. Those
+exist nowhere else, so they have to come home before the instance goes.
+
+**Before the trial ends** (set a reminder for day 25):
+
+```bash
+# 1. bring the cloud's progress home
+./venv/bin/python -m app.cli.migrate_to_postgres --from-aiven --replace --dry-run
+./venv/bin/python -m app.cli.migrate_to_postgres --from-aiven --replace
+
+# 2. take a dump that does not depend on either database existing
+./venv/bin/python -m app.cli.backup
+```
+
+`--from-aiven --replace` overwrites local with the cloud copy, so take a
+backup first if local has work the cloud has not seen. When in doubt, dump
+both and compare counts.
+
+**Moving to a new host** afterwards: point `POSTGRESQL_AIVEN_URI` at the
+replacement and run the push below. Nothing else changes -- the app reads
+`DB_TARGET`, and the schema is created by the migration.
+
+---
+
 ## Push the corpus to Aiven
 
 Local Postgres is the working copy; Aiven is the deployment copy. Refresh it
