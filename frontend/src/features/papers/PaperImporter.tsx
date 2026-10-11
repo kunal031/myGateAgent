@@ -6,9 +6,13 @@ import { AlertTriangle, Check, Link2, Loader2, Plus, Upload, X } from "lucide-re
 import MathText from "@/components/MathText";
 import { SubjectItem } from "@/lib/api";
 import {
-  ImportPreview, ParsedQuestion, confirmPaperImport, createTopic,
-  importPaperFromPdf, importPaperFromUrl,
+  ImportPreview, PaperProgress, ParsedQuestion, confirmPaperImport,
+  createTopic, fetchPaperPreview, fetchPaperStatus, importPaperFromPdf,
+  importPaperFromUrl,
 } from "@/lib/papers";
+
+/** How often to ask the server how far an import has got. */
+const POLL_MS = 2000;
 
 interface Props {
   subjects: SubjectItem[];
@@ -17,7 +21,7 @@ interface Props {
   onImported: (stored: number) => void;
 }
 
-type Step = "source" | "review" | "saving";
+type Step = "source" | "working" | "review" | "saving";
 
 /**
  * Import a paper: choose where it files, fetch it, review what was found,
@@ -45,6 +49,9 @@ export default function PaperImporter({ subjects, onClose, onImported }: Props) 
   const [questions, setQuestions] = useState<ParsedQuestion[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // The import runs on the server; this is the last progress it reported.
+  const [paperId, setPaperId] = useState<number | null>(null);
+  const [progress, setProgress] = useState<PaperProgress | null>(null);
 
   // Topics come from the syllabus payload and grow when one is added here.
   const [extraTopics, setExtraTopics] = useState<
@@ -67,6 +74,49 @@ export default function PaperImporter({ subjects, onClose, onImported }: Props) 
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = previous; };
   }, []);
+
+  // Follow the server's progress. Polling rather than a socket: an import
+  // is a handful of state changes over a few minutes, and a poll survives
+  // the page being closed and reopened, which is the case that matters.
+  useEffect(() => {
+    if (paperId === null) return;
+    if (step !== "working" && step !== "saving") return;
+
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const status = await fetchPaperStatus(paperId);
+        if (cancelled) return;
+        setProgress(status);
+
+        if (status.import_status === "failed") {
+          setError(status.import_error || "That import failed.");
+          setStep("source");
+          setBusy(false);
+          return;
+        }
+        if (status.import_status === "preview") {
+          const found = await fetchPaperPreview(paperId);
+          if (cancelled) return;
+          setPreview(found);
+          setQuestions(found.questions);
+          setStep("review");
+          setBusy(false);
+          return;
+        }
+        if (status.import_status === "complete") {
+          onImported(status.question_count);
+          onClose();
+        }
+      } catch {
+        // A dropped poll is not a failed import; the next one retries.
+      }
+    };
+
+    void tick();
+    const timer = window.setInterval(tick, POLL_MS);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [paperId, step, onImported, onClose]);
 
   const addTopic = useCallback(async () => {
     const label = newTopic.trim();
@@ -100,7 +150,9 @@ export default function PaperImporter({ subjects, onClose, onImported }: Props) 
     setBusy(true);
     setError("");
     try {
-      const result = mode === "url"
+      // Returns as soon as the paper exists; the parsing happens on the
+      // server and is followed through the status endpoint.
+      const queued = mode === "url"
         ? await importPaperFromUrl({
             url: url.trim(), subject_slug: subjectSlug,
             topic_slug: topicSlug, name: name.trim() || undefined,
@@ -109,12 +161,10 @@ export default function PaperImporter({ subjects, onClose, onImported }: Props) 
             file: file!, subject_slug: subjectSlug,
             topic_slug: topicSlug, name: name.trim() || undefined,
           });
-      setPreview(result);
-      setQuestions(result.questions);
-      setStep("review");
+      setPaperId(queued.paper.id);
+      setStep("working");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not import that");
-    } finally {
       setBusy(false);
     }
   };
@@ -133,12 +183,12 @@ export default function PaperImporter({ subjects, onClose, onImported }: Props) 
 
   const save = async () => {
     if (!preview || unanswered > 0) return;
-    setStep("saving");
     setError("");
     try {
-      const result = await confirmPaperImport(preview.paper.id, questions, true);
-      onImported(result.stored);
-      onClose();
+      // Also returns immediately; the polling effect above carries it the
+      // rest of the way and closes once the questions are stored.
+      await confirmPaperImport(preview.paper.id, questions, true);
+      setStep("saving");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save those questions");
       setStep("review");
@@ -322,7 +372,41 @@ export default function PaperImporter({ subjects, onClose, onImported }: Props) 
             </>
           )}
 
-          {step !== "source" && preview && (
+          {(step === "working" || step === "saving") && (
+            <div className="space-y-2 py-6 text-center">
+              <Loader2 className="mx-auto h-5 w-5 animate-spin"
+                       style={{ color: "var(--ink-faint)" }} />
+              <p className="text-[13px] font-bold" style={{ color: "var(--ink)" }}>
+                {progress?.progress_note || "Working…"}
+              </p>
+              {progress && progress.progress_total > 0 && (
+                <>
+                  <p className="text-[11px] font-semibold"
+                     style={{ color: "var(--ink-faint)" }}>
+                    {progress.progress_done} of {progress.progress_total}
+                  </p>
+                  <div className="mx-auto h-1.5 w-56 overflow-hidden rounded-[var(--radius-pill)]"
+                       style={{ background: "var(--surface-sunk)",
+                                border: "var(--line-width) solid var(--line)" }}>
+                    <div
+                      className="h-full transition-all duration-300"
+                      style={{
+                        width: `${Math.round(
+                          (progress.progress_done / progress.progress_total) * 100,
+                        )}%`,
+                        background: "var(--accent)",
+                      }}
+                    />
+                  </div>
+                </>
+              )}
+              <p className="text-[11px]" style={{ color: "var(--ink-faint)" }}>
+                This keeps running if you close this window.
+              </p>
+            </div>
+          )}
+
+          {step === "review" && preview && (
             <>
               <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold">
                 <span className="rounded-[var(--radius-pill)] px-2 py-1"
@@ -409,10 +493,22 @@ export default function PaperImporter({ subjects, onClose, onImported }: Props) 
           <p className="text-[10px] font-semibold" style={{ color: "var(--ink-faint)" }}>
             {step === "source"
               ? "Nothing is saved until you review what was found."
-              : "Solutions are written after saving, and cited to their source."}
+              : step === "review"
+                ? "Solutions are written after saving, and cited to their source."
+                : "Running on the server."}
           </p>
 
-          {step === "source" ? (
+          {step === "working" || step === "saving" ? (
+            <button
+              type="button"
+              onClick={onClose}
+              className="min-h-11 rounded-[var(--radius-pill)] px-4 text-[12px] font-bold"
+              style={{ background: "var(--surface)", color: "var(--ink)",
+                       border: "var(--line-width) solid var(--line)" }}
+            >
+              Close and keep working
+            </button>
+          ) : step === "source" ? (
             <button
               type="button"
               onClick={runImport}
@@ -428,17 +524,13 @@ export default function PaperImporter({ subjects, onClose, onImported }: Props) 
             <button
               type="button"
               onClick={save}
-              disabled={unanswered > 0 || step === "saving"}
+              disabled={unanswered > 0}
               className="flex min-h-11 items-center gap-1.5 rounded-[var(--radius-pill)] px-4 text-[12px] font-bold disabled:opacity-40"
               style={{ background: "var(--success)", color: "var(--ink)",
                        border: "var(--line-width) solid var(--line)" }}
             >
-              {step === "saving"
-                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                : <Check className="h-3.5 w-3.5" />}
-              {step === "saving"
-                ? "Saving and writing solutions…"
-                : `Save ${questions.length} questions`}
+              <Check className="h-3.5 w-3.5" />
+              Save {questions.length} questions
             </button>
           )}
         </footer>

@@ -36,6 +36,16 @@ export interface ParsedQuestion {
   solution_source?: SolutionSource;
 }
 
+export interface PaperProgress {
+  id: number;
+  import_status: "parsing" | "preview" | "saving" | "complete" | "failed";
+  import_error: string;
+  progress_done: number;
+  progress_total: number;
+  progress_note: string;
+  question_count: number;
+}
+
 export interface QuestionPaper {
   id: number;
   name: string;
@@ -49,8 +59,11 @@ export interface QuestionPaper {
   exam_year: number | null;
   source_label: string;
   question_count: number;
-  import_status: "parsing" | "preview" | "complete" | "failed";
+  import_status: "parsing" | "preview" | "saving" | "complete" | "failed";
   import_error: string;
+  progress_done: number;
+  progress_total: number;
+  progress_note: string;
   created_at: string | null;
 }
 
@@ -101,18 +114,24 @@ export async function fetchPapers(
   return data.items;
 }
 
+/** Queued, not finished: poll {@link fetchPaperStatus} for progress. */
+export interface QueuedImport {
+  paper: QuestionPaper;
+  queued: boolean;
+}
+
 export async function importPaperFromUrl(input: {
   url: string;
   subject_slug: string;
   topic_slug: string;
   name?: string;
-}): Promise<ImportPreview> {
+}): Promise<QueuedImport> {
   const res = await fetch(`${API_BASE}/api/papers/import/url`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
-  return json<ImportPreview>(res, "Could not import from that link");
+  return json<QueuedImport>(res, "Could not import from that link");
 }
 
 export async function importPaperFromPdf(input: {
@@ -120,7 +139,7 @@ export async function importPaperFromPdf(input: {
   subject_slug: string;
   topic_slug: string;
   name?: string;
-}): Promise<ImportPreview> {
+}): Promise<QueuedImport> {
   const form = new FormData();
   form.append("file", input.file);
   form.append("subject_slug", input.subject_slug);
@@ -132,20 +151,38 @@ export async function importPaperFromPdf(input: {
     method: "POST",
     body: form,
   });
-  return json<ImportPreview>(res, "Could not import that file");
+  return json<QueuedImport>(res, "Could not import that file");
 }
 
 export async function confirmPaperImport(
   paperId: number,
   questions: ParsedQuestion[],
   generateExplanations = true,
-): Promise<{ paper: QuestionPaper; stored: number; skipped: number }> {
+): Promise<QueuedImport> {
   const res = await fetch(`${API_BASE}/api/papers/${paperId}/confirm`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ questions, generate_explanations: generateExplanations }),
   });
-  return json(res, "Could not save those questions");
+  return json<QueuedImport>(res, "Could not save those questions");
+}
+
+/** Light enough to poll once a second while an import runs. */
+export async function fetchPaperStatus(
+  paperId: number,
+  signal?: AbortSignal,
+): Promise<PaperProgress> {
+  const res = await fetch(`${API_BASE}/api/papers/${paperId}/status`, { signal });
+  return json<PaperProgress>(res, "Could not read import progress");
+}
+
+/** The parsed questions awaiting review, recoverable after a reload. */
+export async function fetchPaperPreview(
+  paperId: number,
+  signal?: AbortSignal,
+): Promise<ImportPreview> {
+  const res = await fetch(`${API_BASE}/api/papers/${paperId}/preview`, { signal });
+  return json<ImportPreview>(res, "Could not load what was found");
 }
 
 export async function fetchPaper(
