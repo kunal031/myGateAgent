@@ -72,17 +72,42 @@ def _apply_socket_timeout(client: "genai.Client") -> None:
     sitting at 0% CPU inside _ssl__SSLSocket_read while the API answered
     other callers normally.
     """
+    import socket
+
     import httpx
 
     seconds = settings.GEMINI_REQUEST_TIMEOUT_MS / 1000
     timeout = httpx.Timeout(seconds, connect=30.0)
+
+    # TCP keepalive as well as the httpx timeout. The timeout alone did not
+    # free a wedged read: the peer leaves the socket ESTABLISHED and sends
+    # nothing, and the blocking SSL read sat in poll() for half an hour with
+    # the ceiling set. Keepalive makes the kernel probe the dead peer and
+    # tear the connection down, which surfaces as an error the retry can
+    # act on.
+    keepalive = [
+        (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
+    ]
+    for name, value in (("TCP_KEEPALIVE", 60), ("TCP_KEEPIDLE", 60),
+                        ("TCP_KEEPINTVL", 20), ("TCP_KEEPCNT", 3)):
+        option = getattr(socket, name, None)
+        if option is not None:
+            keepalive.append((socket.IPPROTO_TCP, option, value))
+
     for attr in ("_httpx_client", "_async_httpx_client"):
         transport = getattr(getattr(client, "_api_client", None), attr, None)
-        if transport is not None:
+        if transport is None:
+            continue
+        try:
+            transport.timeout = timeout
+        except Exception:  # pragma: no cover - SDK internals may change
+            logger.warning("Could not set a timeout on %s", attr)
+        pool = getattr(getattr(transport, "_transport", None), "_pool", None)
+        if pool is not None:
             try:
-                transport.timeout = timeout
-            except Exception:  # pragma: no cover - SDK internals may change
-                logger.warning("Could not set a timeout on %s", attr)
+                pool._socket_options = keepalive
+            except Exception:  # pragma: no cover
+                logger.warning("Could not set socket options on %s", attr)
 
 
 # Retry transient faults only. A bad request or an exhausted daily quota is
@@ -132,10 +157,52 @@ def generate_text(
         response_mime_type=response_mime_type,
         response_schema=response_schema,
     )
-    response = get_client().models.generate_content(
-        model=model, contents=prompt, config=config
+    response = _with_deadline(
+        get_client().models.generate_content,
+        model=model, contents=prompt, config=config,
     )
     return (response.text or "").strip()
+
+
+@_retry
+def _with_deadline(fn, *args, **kwargs):
+    """Run `fn` on a throwaway thread and give up after the ceiling.
+
+    Belt and braces over the httpx timeout. A wedged SSL read has twice
+    survived a configured timeout -- the socket stays ESTABLISHED, nothing
+    arrives, and poll() waits -- so this bounds the call in wall-clock time
+    regardless of what the transport does. The abandoned thread is a daemon
+    and dies with the process; leaking one is far cheaper than losing a
+    multi-hour run to a single stuck page.
+    """
+    import threading
+
+    # A bare daemon thread, not a ThreadPoolExecutor: the executor joins its
+    # workers at interpreter shutdown even after shutdown(wait=False), so a
+    # single stuck call would stop the process from ever exiting -- which is
+    # the failure this function exists to prevent.
+    box: dict = {}
+
+    def run() -> None:
+        try:
+            box["value"] = fn(*args, **kwargs)
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the caller
+            box["error"] = exc
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(timeout=settings.GEMINI_REQUEST_TIMEOUT_MS / 1000)
+
+    if worker.is_alive():
+        # Abandoned, not killed: Python cannot interrupt a thread blocked in
+        # a socket read. It dies with the process, and one leaked thread is
+        # far cheaper than losing a multi-hour run to a single stuck page.
+        raise TimeoutError(
+            f"Gemini call exceeded {settings.GEMINI_REQUEST_TIMEOUT_MS}ms"
+        )
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
 
 
 @_retry
@@ -150,7 +217,8 @@ def transcribe_image(
     """Transcribe a rendered page image. Temperature 0: copying, not creating."""
     ingest_limiter.acquire()
 
-    response = get_client().models.generate_content(
+    response = _with_deadline(
+        get_client().models.generate_content,
         model=model,
         contents=[
             types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
@@ -178,7 +246,8 @@ def generate_grounded(
     # waiting on must not queue behind a batch of them either.
     (interactive_limiter if interactive else search_limiter).acquire()
 
-    response = get_client().models.generate_content(
+    response = _with_deadline(
+        get_client().models.generate_content,
         model=model,
         contents=prompt,
         config=types.GenerateContentConfig(
