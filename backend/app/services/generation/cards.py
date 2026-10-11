@@ -32,6 +32,47 @@ TEMPLATES = {
 }
 
 
+def _card_schema():
+    """Constrain the reply so the API guarantees well-formed JSON.
+
+    Card content is dense with LaTeX, so a reply is full of backslashes and
+    newlines that have to survive JSON escaping. The repair chain handled
+    most of it and lost the rest: ten concepts were dropped outright, all of
+    them maths-heavy -- eigenvalues, similarity transformations. A schema
+    moves the escaping to the API, which gets it right.
+    """
+    from google.genai import types
+
+    return types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "cards": types.Schema(
+                type=types.Type.ARRAY,
+                items=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "card_type": types.Schema(type=types.Type.STRING),
+                        "title": types.Schema(type=types.Type.STRING),
+                        "content": types.Schema(type=types.Type.STRING),
+                        "takeaway": types.Schema(type=types.Type.STRING),
+                        "sequence": types.Schema(type=types.Type.INTEGER),
+                        "source_number": types.Schema(type=types.Type.INTEGER),
+                        # The quote the grounding check verifies against the
+                        # retrieved text. Omitting it from the schema would
+                        # drop it from every reply and fail every card.
+                        "supported_by": types.Schema(type=types.Type.STRING),
+                    },
+                    required=[
+                        "card_type", "title", "content", "takeaway",
+                        "supported_by",
+                    ],
+                ),
+            ),
+        },
+        required=["cards"],
+    )
+
+
 def generate_cards_for_concept(
     db: Session,
     concept_id: int,
@@ -107,6 +148,7 @@ def generate_cards_for_concept(
         ),
         system_instruction=prompts.SYSTEM,
         response_mime_type="application/json",
+        response_schema=_card_schema(),
         temperature=0.4,
     )
 
