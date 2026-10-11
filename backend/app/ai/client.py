@@ -53,7 +53,36 @@ def get_client() -> genai.Client:
                 timeout=settings.GEMINI_REQUEST_TIMEOUT_MS,
             ),
         )
+        _apply_socket_timeout(_client)
     return _client
+
+
+def _apply_socket_timeout(client: "genai.Client") -> None:
+    """Force the timeout onto the transport the SDK actually reads from.
+
+    Passing HttpOptions(timeout=...) is not enough: the SDK stores it but
+    leaves its httpx client on Timeout(timeout=None). Verified by reading
+    the live object -- _http_options.timeout was 180000 while the transport
+    said None.
+
+    The consequence is not a slow request but a permanent one. Google's
+    endpoint occasionally leaves a half-open socket: the connection stays
+    ESTABLISHED, no data ever arrives, and a blocking SSL read waits
+    forever. Three long runs were lost to it, one for two days, each
+    sitting at 0% CPU inside _ssl__SSLSocket_read while the API answered
+    other callers normally.
+    """
+    import httpx
+
+    seconds = settings.GEMINI_REQUEST_TIMEOUT_MS / 1000
+    timeout = httpx.Timeout(seconds, connect=30.0)
+    for attr in ("_httpx_client", "_async_httpx_client"):
+        transport = getattr(getattr(client, "_api_client", None), attr, None)
+        if transport is not None:
+            try:
+                transport.timeout = timeout
+            except Exception:  # pragma: no cover - SDK internals may change
+                logger.warning("Could not set a timeout on %s", attr)
 
 
 # Retry transient faults only. A bad request or an exhausted daily quota is
