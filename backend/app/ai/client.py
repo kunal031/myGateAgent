@@ -40,14 +40,38 @@ def get_client() -> genai.Client:
             "backend/.env and add your key."
         )
     if _client is None:
-        _client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        from google.genai import types
+
+        # Without a timeout a stalled socket blocks forever. Two long runs
+        # were found wedged at 0% CPU on reads that never returned -- one
+        # for two days -- while the API itself was answering normally.
+        # tenacity retries TimeoutError, so a request that dies this way is
+        # now retried instead of hanging the whole run.
+        _client = genai.Client(
+            api_key=settings.GEMINI_API_KEY,
+            http_options=types.HttpOptions(
+                timeout=settings.GEMINI_REQUEST_TIMEOUT_MS,
+            ),
+        )
     return _client
 
 
 # Retry transient faults only. A bad request or an exhausted daily quota is
 # not worth retrying, so those propagate immediately.
+# httpx raises its own timeout types, which are not TimeoutError, so a
+# stalled request would otherwise exhaust no retries at all.
+try:  # pragma: no cover - import shape depends on the installed httpx
+    import httpx
+
+    _TRANSIENT: tuple[type[BaseException], ...] = (
+        TimeoutError, ConnectionError, httpx.TimeoutException,
+        httpx.TransportError,
+    )
+except ImportError:
+    _TRANSIENT = (TimeoutError, ConnectionError)
+
 _retry = retry(
-    retry=retry_if_exception_type((TimeoutError, ConnectionError)),
+    retry=retry_if_exception_type(_TRANSIENT),
     wait=wait_exponential(multiplier=2, min=4, max=60),
     stop=stop_after_attempt(4),
     reraise=True,

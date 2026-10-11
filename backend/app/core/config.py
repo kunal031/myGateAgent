@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     GEMINI_GENERATE_MAX_PER_DAY: int = 20000
     # Interactive asks are few but must never wait on a batch run.
     GEMINI_INTERACTIVE_MAX_PER_DAY: int = 5000
+    # Per-request ceiling, in milliseconds. A vision page or a long
+    # generation can legitimately take a minute; beyond that the socket is
+    # stuck, and failing lets the retry handle it.
+    GEMINI_REQUEST_TIMEOUT_MS: int = 180_000
 
     # Kept for compatibility; the two budgets above supersede it.
     GEMINI_MAX_REQUESTS_PER_DAY: int = 20000
