@@ -42,7 +42,9 @@ export default function QuizPage() {
         if (cancelled) return;
         setPatterns(p);
         setSyllabus(s);
-        const first = p.subjects.find((x) => x.question_count > 0);
+        // Start on a subject that can actually be drilled.
+        const first = p.subjects.find((x) => x.question_count > 0)
+          ?? p.subjects[0];
         if (first) setSubject(first.slug);
       })
       .catch(() => !cancelled && setError("Could not load quiz options."));
@@ -76,8 +78,18 @@ export default function QuizPage() {
     }
   }, []);
 
+  /** Questions available in the chosen subject; zero means nothing to drill. */
+  const subjectQuestionCount = useMemo(
+    () => (patterns?.subjects ?? []).find((s) => s.slug === subject)
+      ?.question_count ?? 0,
+    [patterns, subject],
+  );
+
   const available = useMemo(
-    () => (patterns?.subjects ?? []).filter((s) => s.question_count > 0),
+    // Every subject, including ones with no questions yet: hiding an empty
+    // subject hides the place to import questions into it, which is how
+    // General Aptitude stayed invisible while its four topics sat unused.
+    () => patterns?.subjects ?? [],
     [patterns],
   );
 
@@ -145,7 +157,10 @@ export default function QuizPage() {
                       onClick={() => { setSubject(s.slug); setTopic("all"); }}
                       className="min-h-10 rounded-[var(--radius-pill)] px-3 text-[11px] font-bold"
                       style={chip(subject === s.slug)}>
-                {s.name} <span style={{ color: "var(--ink-faint)" }}>({s.question_count})</span>
+                {s.name}{" "}
+                <span style={{ color: "var(--ink-faint)" }}>
+                  ({s.question_count})
+                </span>
               </button>
             ))}
           </div>
@@ -248,7 +263,7 @@ export default function QuizPage() {
         <button
           type="button"
           onClick={launch}
-          disabled={starting || !subject}
+          disabled={starting || !subject || subjectQuestionCount === 0}
           className="flex min-h-12 w-full items-center justify-center gap-2 rounded-[var(--radius-pill)] text-sm font-extrabold disabled:opacity-50 sm:w-auto sm:px-8"
           style={{ background: "var(--accent)", color: "var(--ink)",
                    border: "var(--line-width) solid var(--line)",
@@ -257,6 +272,13 @@ export default function QuizPage() {
           <Play className="h-4 w-4" />
           {starting ? "Preparing questions..." : "Start quiz"}
         </button>
+
+        {subject && subjectQuestionCount === 0 && (
+          <p className="text-[11px] font-semibold"
+             style={{ color: "var(--ink-faint)" }}>
+            No questions in this subject yet. Use Add paper to import some.
+          </p>
+        )}
 
         {patterns && (
           <p className="flex items-center gap-1.5 text-[11px] font-semibold"

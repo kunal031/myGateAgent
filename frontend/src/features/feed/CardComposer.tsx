@@ -6,6 +6,7 @@ import { Loader2, Plus, X } from "lucide-react";
 import {
   FeedCardItem, SubjectItem, UserCardInput, createUserCard, updateUserCard,
 } from "@/lib/api";
+import { createTopic } from "@/lib/papers";
 
 type CardType = FeedCardItem["card_type"];
 
@@ -43,15 +44,46 @@ export default function CardComposer({ subjects, card = null, onClose, onSaved }
   const [mode, setMode] = useState("ADVANCED");
   const [tags, setTags] = useState<string[]>(card?.tags ?? []);
   const [tagDraft, setTagDraft] = useState("");
+  // Topics a card can be filed under, including any added here. The
+  // syllabus is seeded, so writing about something it does not name needs
+  // a way to add it without leaving the composer.
+  const [newTopic, setNewTopic] = useState("");
+  const [addingTopic, setAddingTopic] = useState(false);
+  const [extraTopics, setExtraTopics] = useState<
+    Record<string, { slug: string; name: string }[]>
+  >({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   const titleRef = useRef<HTMLInputElement>(null);
 
-  const topics = useMemo(
-    () => subjects.find((s) => s.slug === subjectSlug)?.topics ?? [],
-    [subjects, subjectSlug],
-  );
+  const topics = useMemo(() => {
+    const base = subjects.find((s) => s.slug === subjectSlug)?.topics ?? [];
+    return [...base, ...(extraTopics[subjectSlug] ?? [])];
+  }, [subjects, subjectSlug, extraTopics]);
+
+  const addTopic = useCallback(async () => {
+    const label = newTopic.trim();
+    if (!label || !subjectSlug) return;
+    setAddingTopic(true);
+    setError("");
+    try {
+      const created = await createTopic(subjectSlug, label);
+      setExtraTopics((prev) => ({
+        ...prev,
+        [subjectSlug]: [
+          ...(prev[subjectSlug] ?? []),
+          { slug: created.slug, name: created.name },
+        ],
+      }));
+      setTopicSlug(created.slug);
+      setNewTopic("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create that topic");
+    } finally {
+      setAddingTopic(false);
+    }
+  }, [newTopic, subjectSlug]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -216,6 +248,39 @@ export default function CardComposer({ subjects, card = null, onClose, onSaved }
               </select>
             </label>
           </div>
+
+          {subjectSlug && (
+            <div className="flex items-end gap-2">
+              <label className="min-w-0 flex-1">
+                <span className="mb-1 block text-[10px] font-extrabold uppercase tracking-wider"
+                      style={{ color: "var(--ink-faint)" }}>
+                  Or add a topic this subject does not have yet
+                </span>
+                <input
+                  value={newTopic}
+                  onChange={(e) => setNewTopic(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") { e.preventDefault(); void addTopic(); }
+                  }}
+                  placeholder="e.g. Spatial Aptitude"
+                  className="min-h-11 w-full rounded-[var(--radius)] px-3 text-sm outline-none"
+                  style={field}
+                />
+              </label>
+              <button
+                type="button"
+                onClick={addTopic}
+                disabled={!newTopic.trim() || addingTopic}
+                className="flex min-h-11 shrink-0 items-center gap-1 rounded-[var(--radius-pill)] px-3 text-[12px] font-bold disabled:opacity-40"
+                style={{ background: "var(--accent)", color: "var(--ink)",
+                         border: "var(--line-width) solid var(--line)" }}
+              >
+                {addingTopic ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                             : <Plus className="h-3.5 w-3.5" />}
+                Add
+              </button>
+            </div>
+          )}
 
           <label className="block">
             <span className="mb-1 block text-[10px] font-extrabold uppercase tracking-wider"
