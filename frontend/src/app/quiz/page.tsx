@@ -1,10 +1,12 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Play, Target } from "lucide-react";
+import { Play, Target, Plus } from "lucide-react";
 
 import SessionHistory from "@/features/exam/SessionHistory";
+import PaperImporter from "@/features/papers/PaperImporter";
+import { QuestionPaper, fetchPapers } from "@/lib/papers";
 import {
   ExamPatterns, SubjectItem, fetchExamPatterns, fetchSyllabus, startExam,
 } from "@/lib/api";
@@ -28,6 +30,9 @@ export default function QuizPage() {
   const [count, setCount] = useState(10);
   const [minutes, setMinutes] = useState(15);
   const [starting, setStarting] = useState(false);
+  const [papers, setPapers] = useState<QuestionPaper[]>([]);
+  const [paperId, setPaperId] = useState("all");
+  const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -42,6 +47,33 @@ export default function QuizPage() {
       })
       .catch(() => !cancelled && setError("Could not load quiz options."));
     return () => { cancelled = true; };
+  }, []);
+
+  // Papers follow the subject and topic, so the picker only offers ones
+  // whose questions the current filters would actually include.
+  // Papers follow the subject and topic, so the picker only offers ones
+  // whose questions the current filters would include. `paperNonce` lets an
+  // import re-run this without duplicating the fetch.
+  const [paperNonce, setPaperNonce] = useState(0);
+  const reloadPapers = useCallback(() => setPaperNonce((n) => n + 1), []);
+
+  useEffect(() => {
+    if (!subject) return;
+    let cancelled = false;
+    fetchPapers({ subjectSlug: subject, topicSlug: topic })
+      .then((rows) => !cancelled && setPapers(rows))
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [subject, topic, paperNonce]);
+
+  /** Re-read the per-subject question counts after an import changes them. */
+  const refreshPatterns = useCallback(async () => {
+    try {
+      const fresh = await fetchExamPatterns();
+      setPatterns(fresh);
+    } catch {
+      // The chips keep their previous counts; nothing is broken by that.
+    }
   }, []);
 
   const available = useMemo(
@@ -119,24 +151,61 @@ export default function QuizPage() {
           </div>
         </div>
 
-        {topics.length > 0 && (
-          <div className="space-y-2">
+        <div className="flex flex-wrap items-end gap-3">
+          {topics.length > 0 && (
+            <div className="min-w-0 space-y-2">
+              <p className="text-[10px] font-extrabold uppercase tracking-wider"
+                 style={{ color: "var(--ink-faint)" }}>Topic</p>
+              <select
+                value={topic}
+                onChange={(e) => { setTopic(e.target.value); setPaperId("all"); }}
+                aria-label="Topic"
+                className="min-h-10 w-full rounded-[var(--radius-pill)] px-3 text-[11px] font-bold sm:w-auto"
+                style={chip(topic !== "all")}
+              >
+                <option value="all">Whole subject</option>
+                {topics.map((t) => (
+                  <option key={t.slug} value={t.slug}>{t.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Papers for the chosen subject and topic, so a drill can be
+              scoped to one imported set rather than the whole bank. */}
+          <div className="min-w-0 space-y-2">
             <p className="text-[10px] font-extrabold uppercase tracking-wider"
-               style={{ color: "var(--ink-faint)" }}>Topic</p>
+               style={{ color: "var(--ink-faint)" }}>Question paper</p>
             <select
-              value={topic}
-              onChange={(e) => setTopic(e.target.value)}
-              aria-label="Topic"
-              className="min-h-10 w-full rounded-[var(--radius-pill)] px-3 text-[11px] font-bold sm:w-auto"
-              style={chip(topic !== "all")}
+              value={paperId}
+              onChange={(e) => setPaperId(e.target.value)}
+              aria-label="Question paper"
+              disabled={papers.length === 0}
+              className="min-h-10 w-full rounded-[var(--radius-pill)] px-3 text-[11px] font-bold disabled:opacity-50 sm:w-auto"
+              style={chip(paperId !== "all")}
             >
-              <option value="all">Whole subject</option>
-              {topics.map((t) => (
-                <option key={t.slug} value={t.slug}>{t.name}</option>
+              <option value="all">
+                {papers.length ? "Any paper" : "No papers yet"}
+              </option>
+              {papers.map((pp) => (
+                <option key={pp.id} value={String(pp.id)}>
+                  {pp.name.slice(0, 48)} ({pp.question_count})
+                </option>
               ))}
             </select>
           </div>
-        )}
+
+          <button
+            type="button"
+            onClick={() => setImporting(true)}
+            className="flex min-h-10 items-center gap-1 rounded-[var(--radius-pill)] px-3 text-[11px] font-bold"
+            style={{ background: "var(--accent)", color: "var(--ink)",
+                     border: "var(--line-width) solid var(--line)" }}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add paper
+          </button>
+        </div>
 
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="space-y-2">
@@ -197,6 +266,14 @@ export default function QuizPage() {
           </p>
         )}
       </section>
+
+      {importing && (
+        <PaperImporter
+          subjects={syllabus}
+          onClose={() => setImporting(false)}
+          onImported={() => { reloadPapers(); void refreshPatterns(); }}
+        />
+      )}
 
       <SessionHistory
         kind="quiz"
