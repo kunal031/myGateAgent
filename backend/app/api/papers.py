@@ -45,6 +45,42 @@ class QuestionEdit(BaseModel):
     question_type: str | None = None
 
 
+#: Explanations run concurrently. Each is up to three sequential model
+#: calls -- retrieve, grade, write -- so a paper of 25 done one at a time
+#: takes many minutes while the student waits on a request.
+EXPLAIN_CONCURRENCY = 6
+
+
+def _explain_all(questions: list[dict], *, subject_id: int) -> None:
+    """Fill in missing explanations in parallel, in place.
+
+    Each worker opens its own session: a SQLAlchemy Session is not safe to
+    share across threads, and the corpus lookup inside explain() queries.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from ..core.database import SessionLocal
+
+    pending = [q for q in questions if not q.get("explanation")]
+    if not pending:
+        return
+
+    def run(item: dict) -> None:
+        worker = SessionLocal()
+        try:
+            result = explain(
+                worker, item.get("content", ""), item.get("correct_answer", ""),
+                subject_id=subject_id,
+            )
+            item["explanation"] = result["explanation"]
+            item["solution_source"] = result["solution_source"]
+        finally:
+            worker.close()
+
+    with ThreadPoolExecutor(max_workers=EXPLAIN_CONCURRENCY) as pool:
+        list(pool.map(run, pending))
+
+
 def _paper_dict(paper: QuestionPaper) -> dict:
     return {
         "id": paper.id,
@@ -252,15 +288,7 @@ def confirm_import(
         raise HTTPException(400, "There is nothing to import")
 
     if payload.generate_explanations:
-        for item in questions:
-            if item.get("explanation"):
-                continue
-            result = explain(
-                db, item.get("content", ""), item.get("correct_answer", ""),
-                subject_id=paper.subject_id,
-            )
-            item["explanation"] = result["explanation"]
-            item["solution_source"] = result["solution_source"]
+        _explain_all(questions, subject_id=paper.subject_id)
 
     provenance = paper.origin_url or f"{paper.file_name} (uploaded)"
     counts = store_questions(db, paper, questions, provenance=provenance)
