@@ -201,10 +201,13 @@ def submit_session(db: Session, session_id: int) -> ExamSession | None:
         correct += int(is_correct)
         wrong += int(not is_correct)
 
+        # The session knows whether it was a quiz or a test; hardcoding
+        # "test" filed every quiz attempt under the wrong mode, which the
+        # analytics then reported as test performance.
         db.add(Attempt(
             question_id=question.id, user_answer=item.user_answer,
             is_correct=is_correct, marks_obtained=marks,
-            time_spent_seconds=item.time_spent_seconds, mode="test",
+            time_spent_seconds=item.time_spent_seconds, mode=session.kind,
         ))
 
         if not is_correct:
