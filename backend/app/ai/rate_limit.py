@@ -44,7 +44,16 @@ class RateLimiter:
         return max(0, self._max_per_day - self._load()["count"])
 
     def acquire(self) -> None:
-        """Block until a request may be made. Raises if the daily cap is hit."""
+        """Block until a request may be made. Raises if the daily cap is hit.
+
+        The lock is held only to claim a slot, never across the sleep that
+        paces requests. Holding it through the sleep serialised every
+        caller, and worse, a caller abandoned mid-sleep -- which the call
+        watchdog does by design -- would never release it and every later
+        request would block forever. That deadlock stopped two ingest runs
+        dead, with every thread parked in _pthread_cond_wait and no socket
+        activity at all.
+        """
         with self._lock:
             state = self._load()
             if state["count"] >= self._max_per_day:
@@ -54,13 +63,18 @@ class RateLimiter:
                     f"if your key is on a paid tier."
                 )
 
-            wait = self._min_interval - (time.monotonic() - self._last_call)
-            if wait > 0:
-                time.sleep(wait)
-            self._last_call = time.monotonic()
+            # Reserve this caller's slot and compute its wait inside the
+            # lock, so the spacing is still honoured across threads.
+            now = time.monotonic()
+            start_at = max(now, self._last_call + self._min_interval)
+            self._last_call = start_at
 
             state["count"] += 1
             self._save(state)
+
+        wait = start_at - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
 
 
 class DailyQuotaExceeded(RuntimeError):
