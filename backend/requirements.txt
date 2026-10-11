@@ -6,7 +6,15 @@ fastapi==0.142.2
 uvicorn[standard]==0.54.0
 pydantic==2.13.5
 pydantic-settings==2.15.0       # .env-backed settings
-python-multipart==0.0.32        # file uploads for /api/sources
+python-multipart==0.0.32        # multipart uploads for /api/papers
+
+# Paper import: fetching a question page and parsing its HTML. All three
+# were already installed as transitive dependencies of gdown and
+# google-genai, so they worked without being declared -- and a clean
+# rebuild could have dropped or shifted them under us.
+httpx==0.28.1
+beautifulsoup4==4.15.0
+lxml==6.1.3
 
 # ---- Database ----
 SQLAlchemy==2.1.3
