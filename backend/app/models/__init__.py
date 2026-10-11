@@ -9,10 +9,10 @@ is present, whichever model a caller actually needs.
 
 from . import models  # noqa: F401  (base tables first)
 from . import (  # noqa: F401
-    assistant, concepts, exams, rotation, sources, syllabus, tags,
+    assistant, concepts, exams, papers, rotation, sources, syllabus, tags,
 )
 
 __all__ = [
     "models", "concepts", "exams", "sources", "syllabus", "assistant",
-    "rotation", "tags",
+    "rotation", "tags", "papers",
 ]

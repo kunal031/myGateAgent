@@ -62,13 +62,26 @@ class Question(Base):
     review_status = Column(String(20), default="approved", index=True)
 
     explanation = Column(Text, nullable=False)
+    # Where the explanation came from: book (cited from the corpus), web
+    # (grounded search, cited by URL), ai (written by the model with no
+    # source), or user. Shown as a badge, because an AI-written solution
+    # deserves more scepticism than one quoting a textbook page.
+    solution_source = Column(String(10), default="", index=True)
     difficulty = Column(String(20), default="Standard GATE")  # Foundational, Standard GATE, Rank Booster
     source = Column(String(100), default="GATE CSE")
     is_pyq = Column(Boolean, default=False)
 
+    # The batch this question was imported with, if any. Nullable: every
+    # question that predates paper import has none.
+    paper_id = Column(
+        Integer, ForeignKey("question_papers.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
+
     subject = relationship("Subject", back_populates="questions")
     topic = relationship("Topic", back_populates="questions")
     attempts = relationship("Attempt", back_populates="question")
+    paper = relationship("QuestionPaper", back_populates="questions")
 
 class FeedCard(Base):
     __tablename__ = "feed_cards"
