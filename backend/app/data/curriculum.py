@@ -371,3 +371,26 @@ def topic_rank(subject_slug: str, topic_slug: str) -> int:
         return order.index(topic_slug)
     except ValueError:
         return len(order)
+
+
+def sort_topics(subject_slug: str, topics: list) -> list:
+    """Put a subject's topics in teaching order.
+
+    Anything listing topics for a human -- the syllabus tree, the quiz and
+    test pickers -- should go through this. Database order is insertion
+    order, which for several subjects is close to reverse teaching order:
+    Digital Logic listed Boolean Algebra before Number Systems, and
+    Operating Systems listed Synchronization before Processes.
+
+    Topics are matched on `.slug`; one the curriculum does not name keeps
+    its relative position at the end rather than disappearing.
+    """
+    return sorted(
+        topics,
+        key=lambda t: (topic_rank(subject_slug, t.slug), t.id),
+    )
+
+
+def sort_subjects(subjects: list) -> list:
+    """Put subjects in study order, by `.slug`."""
+    return sorted(subjects, key=lambda s: (subject_rank(s.slug), s.id))

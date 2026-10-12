@@ -3,16 +3,27 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ..core.database import get_db
 from ..models.models import Subject, Topic, Question
+from ..data.curriculum import sort_subjects, sort_topics
 from ..services.feed.tagging import slugify
 
 router = APIRouter(prefix="/api/syllabus", tags=["Syllabus"])
 
 @router.get("")
 def get_full_syllabus(db: Session = Depends(get_db)):
-    subjects = db.query(Subject).all()
+    """The syllabus tree, in study order.
+
+    Everything that lists subjects or topics for a human reads this -- the
+    feed filters, the quiz and test pickers, the paper importer -- so the
+    order belongs here rather than in each caller. Database order is
+    insertion order, which for several subjects ran close to backwards:
+    Digital Logic opened on Boolean Algebra rather than Number Systems.
+    """
+    subjects = sort_subjects(db.query(Subject).all())
     result = []
     for s in subjects:
-        topics = db.query(Topic).filter(Topic.subject_id == s.id).all()
+        topics = sort_topics(
+            s.slug, db.query(Topic).filter(Topic.subject_id == s.id).all(),
+        )
         q_count = db.query(Question).filter(Question.subject_id == s.id).count()
         result.append({
             "id": s.id,

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..core.database import get_db
+from ..data.curriculum import sort_subjects
 from ..models.exams import ExamSession, ExamStatus
 from ..models.models import Subject, Topic
 from ..services.exam import patterns as pattern_defs
@@ -42,8 +43,11 @@ def list_patterns(db: Session = Depends(get_db)):
     """Presets and the subjects available, for the pattern setter."""
     from ..models.models import Question
 
+    # Study order, not exam weight. Sorting by marks put General Aptitude
+    # first in the quiz and test pickers, when the thing to drill first is
+    # the discrete maths that Algorithms depends on.
     subjects = []
-    for subject in db.query(Subject).order_by(Subject.weightage_marks.desc()).all():
+    for subject in sort_subjects(db.query(Subject).all()):
         count = db.query(Question).filter(Question.subject_id == subject.id).count()
         subjects.append({
             "slug": subject.slug,
