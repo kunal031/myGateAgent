@@ -28,13 +28,17 @@ from ..services.import_paper.store import dedupe_key, negative_for
 #: The aptitude section always leads the paper and ends where the subject
 #: questions begin. Both markers appear verbatim in every paper from 2019 on.
 _GA_START = re.compile(r"General\s+Aptitude", re.I)
+#: The technical section's opening. Matched on a line of its own, because
+#: a bare "Q.11" also occurs inside answer tables and cross-references.
 _GA_END = re.compile(
-    r"(Computer\s+Science\s+and\s+Information\s+Technology|"
-    r"Q\.?\s*11\s*[–-]\s*Q\.?\s*35|"
-    # The technical section opens at Q.11 however it is numbered.
-    r"\bQ\.?\s*11\b)",
-    re.I,
+    r"^\s*(?:Q\.?\s*11\b|Computer\s+Science\s+and\s+Information\s+Technology)",
+    re.I | re.M,
 )
+
+#: GATE's aptitude section is always ten questions. Anything past the tenth
+#: belongs to another section, whatever the markers say.
+_GA_QUESTION = re.compile(r"^\s*Q\.?\s*(\d{1,2})\b", re.M)
+MAX_GA_QUESTIONS = 10
 
 #: The four seeded topics a GA question can belong to.
 _TOPIC_SLUGS = (
@@ -110,14 +114,35 @@ def aptitude_text(db, source_id: int) -> str:
     if start is None:
         return ""
     tail = whole[start.start():]
+
+    # Cut at the technical section if its heading is there.
     end = _GA_END.search(tail)
-    if end is None:
-        # Without a boundary there is no way to tell where aptitude stops
-        # and the technical section begins. GATE 2020's file is a five-page
-        # extract with no marker, and guessing a character count pulled in
-        # graph theory and CPU scheduling as "aptitude".
+    if end is not None:
+        tail = tail[:end.start()]
+
+    # Then cut where the numbering stops being this section's. Markers
+    # alone proved unreliable: one paper's heading matched a stray "Q.1"
+    # and truncated to a single question, while another ran on into a
+    # different discipline and offered soil-mechanics questions as
+    # aptitude. These files concatenate several papers, so the numbering
+    # restarts rather than passing ten -- the cut is the first number that
+    # goes backwards, or the first above ten.
+    highest = 0
+    for match in _GA_QUESTION.finditer(tail):
+        number = int(match.group(1))
+        if number > MAX_GA_QUESTIONS or (highest and number < highest):
+            tail = tail[:match.start()]
+            break
+        highest = max(highest, number)
+
+    # A section with only one or two questions found is a boundary failure,
+    # not a short paper; importing it would file a fragment.
+    found = sum(1 for m in _GA_QUESTION.finditer(tail)
+                if int(m.group(1)) <= MAX_GA_QUESTIONS)
+    if found < 3:
         return ""
-    return tail[:end.start()]
+
+    return tail
 
 
 def main() -> None:
