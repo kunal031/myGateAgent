@@ -534,3 +534,67 @@ export async function deleteUserCard(id: number): Promise<void> {
     throw new Error(detail?.detail ?? "Could not delete that card");
   }
 }
+
+/** Findings worth acting on, from /api/stats/insights. */
+export interface Insight {
+  kind: string;
+  severity: "high" | "medium" | "low";
+  title: string;
+  detail: string;
+  action: string;
+}
+
+export interface DeepAnalytics {
+  by_question_type: {
+    question_type: string; attempts: number; correct: number;
+    accuracy: number; avg_seconds: number; marks: number;
+  }[];
+  pace: {
+    samples: number; total_minutes?: number; over_budget?: number;
+    over_budget_pct?: number; slow_and_wrong?: number;
+    rushed_errors?: number; avg_seconds_by_marks?: Record<string, number>;
+  };
+  trend: {
+    window_days: number; recent_attempts: number;
+    recent_accuracy: number | null; prior_accuracy: number | null;
+    change: number | null; direction: string;
+  };
+  daily_activity: { date: string; attempts: number; correct: number }[];
+  weak_topics: {
+    topic_name: string; topic_slug: string; subject_name: string;
+    subject_slug: string; attempts: number; accuracy: number;
+    marks_at_stake: number;
+  }[];
+  distractors: {
+    question_id: number; topic_name: string; question: string;
+    your_answer: string; your_answer_text: string;
+    correct_answer: string; times_wrong: number;
+  }[];
+  readiness: {
+    projected_marks: number; assessed_weight: number;
+    unassessed_weight: number; confidence: string;
+    untested_subjects: { subject_name: string; weightage_marks: number }[];
+  };
+  retention: {
+    cards_seen: number; cards_recalled: number; cards_mastered: number;
+    total_lapses: number; lapse_rate: number; due_now: number;
+    concepts_by_status: Record<string, number>;
+  };
+  exam_behaviour: {
+    sessions: number; items?: number; unattempted?: number;
+    unattempted_pct?: number; heavily_revisited?: number;
+    avg_accuracy?: number; best_score?: number; latest_score?: number;
+  };
+}
+
+export async function fetchInsights(): Promise<Insight[]> {
+  const res = await fetch(`${API_BASE}/api/stats/insights`);
+  if (!res.ok) throw new Error("Could not load insights");
+  return (await res.json()).insights;
+}
+
+export async function fetchDeepAnalytics(): Promise<DeepAnalytics> {
+  const res = await fetch(`${API_BASE}/api/stats/deep`);
+  if (!res.ok) throw new Error("Could not load analytics");
+  return res.json();
+}

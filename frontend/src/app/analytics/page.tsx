@@ -2,6 +2,9 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
+
+import DeepPanels from "@/features/analytics/DeepPanels";
+import InsightsPanel from "@/features/analytics/InsightsPanel";
 import { 
   BarChart3, 
   CheckCircle, 
@@ -56,6 +59,10 @@ export default function AnalyticsPage() {
           </div>
         </div>
       </div>
+
+      <InsightsPanel />
+
+      <DeepPanels />
 
       {/* KPI Cards Row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
