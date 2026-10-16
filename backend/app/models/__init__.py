@@ -7,6 +7,7 @@ hits NoReferencedTableError. Importing the package guarantees the whole set
 is present, whichever model a caller actually needs.
 """
 
+from . import chapters  # noqa: F401  (Topic.chapter resolves against this)
 from . import models  # noqa: F401  (base tables first)
 from . import (  # noqa: F401
     assistant, concepts, exams, papers, rotation, sources, syllabus, tags,
@@ -14,6 +15,6 @@ from . import (  # noqa: F401
 )
 
 __all__ = [
-    "models", "concepts", "exams", "sources", "syllabus", "assistant",
-    "rotation", "tags", "papers", "users",
+    "models", "chapters", "concepts", "exams", "sources", "syllabus",
+    "assistant", "rotation", "tags", "papers", "users",
 ]

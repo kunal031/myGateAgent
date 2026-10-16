@@ -38,8 +38,10 @@ class Topic(Base):
     sequence = Column(Integer, default=0, index=True)
 
     subject = relationship("Subject", back_populates="topics")
-    chapter = relationship("Chapter", foreign_keys=[chapter_id],
-                           overlaps="topics")
+    # Module-qualified: syllabus.py defines a second, unused Chapter,
+    # and a bare "Chapter" is ambiguous in the registry.
+    chapter = relationship("app.models.chapters.Chapter",
+                           foreign_keys=[chapter_id], overlaps="topics")
     questions = relationship("Question", back_populates="topic")
     feed_cards = relationship("FeedCard", back_populates="topic")
 

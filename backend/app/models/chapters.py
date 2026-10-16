@@ -68,12 +68,17 @@ class Chapter(Base):
     subject = relationship("Subject")
     topics = relationship(
         "Topic",
-        primaryjoin="Chapter.id == foreign(Topic.chapter_id)",
+        primaryjoin="app.models.chapters.Chapter.id "
+                    "== foreign(Topic.chapter_id)",
         viewonly=True,
     )
 
     __table_args__ = (
         # One slug per subject, not globally: "miscellaneous" is a legitimate
         # chapter name in more than one subject.
-        Index("ix_chapter_subject_slug", "subject_id", "slug", unique=True),
+        # Name differs from the old `chapters` table's index deliberately:
+        # an identical name there made the migration report the step as
+        # already done, so the constraint was never created.
+        Index("ix_syllabus_chapter_subject_slug",
+              "subject_id", "slug", unique=True),
     )

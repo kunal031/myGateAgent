@@ -96,7 +96,11 @@ class SyllabusTopic(Base):
 
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    chapter = relationship("Chapter", back_populates="topics")
+    # Module-qualified since models/chapters.py defines the Chapter the
+    # live tables use; a bare "Chapter" is ambiguous in the registry and
+    # fails at mapper configuration, which breaks unrelated queries.
+    chapter = relationship("app.models.syllabus.Chapter",
+                           back_populates="topics")
     subtopics = relationship(
         "Subtopic", back_populates="topic",
         cascade="all, delete-orphan", order_by="Subtopic.sequence",

@@ -208,3 +208,45 @@ def insights(db: Session = Depends(get_db),
     order = {"high": 0, "medium": 1, "low": 2}
     found.sort(key=lambda i: order.get(i["severity"], 3))
     return {"insights": found, "count": len(found)}
+
+
+# ----------------------------------------------------- hierarchy drill-down
+
+@router.get("/breakdown")
+def breakdown_subjects(db: Session = Depends(get_db),
+                       user: User = Depends(current_user)):
+    """Every subject, heaviest first.
+
+    The top of the drill-down. Chapters are fetched only when a row is
+    opened, so loading this page does not compute 39 chapters, 57 topics
+    and 282 concepts the student will not look at.
+    """
+    from ..services.analytics import breakdown as brk
+    return brk.subject_breakdown(db, user.id)
+
+
+@router.get("/breakdown/subject/{subject_id}")
+def breakdown_chapters(subject_id: int,
+                       db: Session = Depends(get_db),
+                       user: User = Depends(current_user)):
+    """The chapters of one subject."""
+    from ..services.analytics import breakdown as brk
+    return brk.chapter_breakdown(db, subject_id, user.id)
+
+
+@router.get("/breakdown/chapter/{chapter_id}")
+def breakdown_topics(chapter_id: int,
+                     db: Session = Depends(get_db),
+                     user: User = Depends(current_user)):
+    """The topics of one chapter."""
+    from ..services.analytics import breakdown as brk
+    return brk.topic_breakdown(db, chapter_id, user.id)
+
+
+@router.get("/breakdown/topic/{topic_id}")
+def breakdown_concepts(topic_id: int,
+                       db: Session = Depends(get_db),
+                       user: User = Depends(current_user)):
+    """The concepts of one topic, with what still needs work."""
+    from ..services.analytics import breakdown as brk
+    return brk.concept_breakdown(db, topic_id, user.id)
