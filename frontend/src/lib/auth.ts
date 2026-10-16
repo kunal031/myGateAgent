@@ -24,6 +24,9 @@ export interface AuthUser {
   email: string;
   display_name: string;
   role: "student" | "admin";
+  avatar_url?: string | null;
+  /** False for an account that only signs in with Google. */
+  has_password?: boolean;
 }
 
 export interface AuthSession {
@@ -53,7 +56,11 @@ function write(key: string, value: string | null): void {
 export const accessToken = () => read(ACCESS_KEY);
 export const refreshToken = () => read(REFRESH_KEY);
 
-export function storeSession(session: AuthSession): void {
+/** Takes only the tokens, so the OAuth callback -- which receives tokens
+ *  without a user object -- can use it and then fetch the user. */
+export function storeSession(
+  session: Pick<AuthSession, "access_token" | "refresh_token">,
+): void {
   write(ACCESS_KEY, session.access_token);
   write(REFRESH_KEY, session.refresh_token);
 }
@@ -84,6 +91,58 @@ export const login = (email: string, password: string) =>
 export const register = (
   email: string, password: string, display_name: string,
 ) => post<AuthSession>("/api/auth/register", { email, password, display_name });
+
+/** Whether this deployment has Google sign-in configured. */
+export async function googleEnabled(): Promise<boolean> {
+  try {
+    const res = await originalFetch(`${API_BASE}/api/auth/google/config`);
+    if (!res.ok) return false;
+    return Boolean((await res.json())?.enabled);
+  } catch {
+    return false;
+  }
+}
+
+/** Hand the browser to Google. A full navigation, not fetch: the consent
+ *  screen is a page the user interacts with, and XHR cannot show it. */
+export function startGoogleSignIn(next = ""): void {
+  const query = next ? `?next=${encodeURIComponent(next)}` : "";
+  window.location.href = `${API_BASE}/api/auth/google/start${query}`;
+}
+
+/**
+ * Read the tokens the callback left in the URL fragment.
+ *
+ * The fragment is used rather than the query string because it is never
+ * transmitted to a server -- no access log, proxy or Referer header ever
+ * sees these tokens. It is cleared from the address bar immediately after
+ * reading so the back button cannot resurrect them.
+ */
+export function consumeOAuthFragment():
+  { session: Pick<AuthSession, "access_token" | "refresh_token">; next: string }
+  | { error: string }
+  | null {
+  if (typeof window === "undefined") return null;
+
+  const error = new URLSearchParams(window.location.search).get("error");
+  if (error) return { error };
+
+  const fragment = window.location.hash.replace(/^#/, "");
+  if (!fragment) return null;
+
+  const params = new URLSearchParams(fragment);
+  const access = params.get("access_token");
+  const refresh = params.get("refresh_token");
+  if (!access || !refresh) return null;
+
+  // Drop the tokens from the visible URL before anything else happens.
+  window.history.replaceState({}, "", window.location.pathname);
+
+  return {
+    session: { access_token: access, refresh_token: refresh },
+    next: params.get("next") || "/",
+  };
+}
 
 export async function logout(): Promise<void> {
   const token = accessToken();
