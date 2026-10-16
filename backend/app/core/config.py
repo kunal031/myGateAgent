@@ -48,6 +48,23 @@ class Settings(BaseSettings):
     #: for any account -- a weak default here is worse than no auth.
     JWT_SECRET: str = ""
 
+    # ---- Google sign-in ----
+    #: From the Google Cloud console, OAuth 2.0 Client ID of type "Web
+    #: application". The ID is public -- it ships in the frontend bundle
+    #: and appears in the authorisation URL -- so only the secret is
+    #: sensitive.
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+
+    #: Where Google sends the browser back. Must match a "Authorised
+    #: redirect URI" in the console *byte for byte*, including the scheme
+    #: and any trailing slash, or Google refuses with redirect_uri_mismatch.
+    GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/auth/google/callback"
+
+    #: Where the backend sends the browser once tokens are minted. The
+    #: frontend reads the tokens off this URL's fragment.
+    OAUTH_SUCCESS_REDIRECT: str = "http://localhost:3000/auth/callback"
+
     # ---- Gemini ----
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL_PRIMARY: str = "gemini-3.8-flash"
@@ -151,6 +168,20 @@ class Settings(BaseSettings):
         could mint a token for any account on any instance.
         """
         return len(self.JWT_SECRET.strip()) >= 32
+
+    @property
+    def google_oauth_configured(self) -> bool:
+        """Whether Google sign-in can run.
+
+        Both halves are required: the ID alone cannot exchange a code, and
+        the secret alone has nothing to identify. When this is false the
+        endpoints return 503 and the frontend hides the button, so a
+        half-configured deployment fails visibly instead of producing a
+        redirect loop through Google.
+        """
+        return bool(
+            self.GOOGLE_CLIENT_ID.strip() and self.GOOGLE_CLIENT_SECRET.strip()
+        )
 
 
 settings = Settings()

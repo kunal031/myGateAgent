@@ -10,6 +10,10 @@ python-multipart==0.0.32        # multipart uploads for /api/papers
 
 # ---- Auth ----
 PyJWT==2.12.1                   # access and refresh tokens
+# PyJWT needs this backend to verify Google's RS256 ID tokens. It was only
+# ever installed transitively, so a clean rebuild could drop it and break
+# Google sign-in with an error that does not name the missing package.
+cryptography==50.0.2
 bcrypt==5.0.0                   # password hashing
 email-validator==2.3.0          # pydantic EmailStr
 
