@@ -1,0 +1,113 @@
+/* GateMaster theme tokens.
+ *
+ * Three themes share one token contract, so components never name a colour
+ * directly -- they use var(--surface), var(--accent) and so on, and switching
+ * theme is a single data-theme attribute on <html>.
+ *
+ * synapse : the reference design -- cream canvas, thick black outlines,
+ *           pastel accents. Default.
+ * light   : the same structure on a neutral white canvas, for daylight and
+ *           long reading sessions.
+ * dark    : the original GateMaster palette, kept for night study.
+ */
+
+:root,
+:root[data-theme="synapse"] {
+  --canvas:        #f8f0e0;   /* cream page background */
+  --surface:       #ffffff;   /* cards, panels */
+  --surface-muted: #fdfaf2;
+  --surface-sunk:  #f3ead6;
+
+  --ink:           #121212;   /* primary text + the signature outlines */
+  --ink-soft:      #4a4a4a;
+  --ink-faint:     #7c7c7c;
+
+  --line:          #121212;   /* borders are ink, not grey */
+  --line-width:    2px;
+  --radius:        18px;
+  --radius-lg:     26px;
+  --radius-pill:   999px;
+  --shadow:        3px 3px 0 var(--ink);   /* hard offset, no blur */
+  --shadow-sm:     2px 2px 0 var(--ink);
+
+  --accent:        #e8d8f8;   /* lavender: primary action */
+  --accent-ink:    #121212;
+  --success:       #c8e8c8;   /* mint: correct */
+  --danger:        #f8c8cc;   /* pink: incorrect, traps */
+  --warning:       #faeec0;   /* butter: caution, hints */
+  --info:          #cfe6f7;
+
+  --trap:          var(--danger);
+  --formula:       var(--info);
+  --concept:       var(--accent);
+  --shortcut:      var(--success);
+}
+
+:root[data-theme="light"] {
+  --canvas:        #f6f7f9;
+  --surface:       #ffffff;
+  --surface-muted: #fbfcfd;
+  --surface-sunk:  #eef1f5;
+
+  --ink:           #16181d;
+  --ink-soft:      #4b5563;
+  --ink-faint:     #8b94a3;
+
+  --line:          #d9dee6;
+  --line-width:    1px;
+  --radius:        14px;
+  --radius-lg:     20px;
+  --radius-pill:   999px;
+  --shadow:        0 1px 3px rgba(16, 24, 40, 0.1);
+  --shadow-sm:     0 1px 2px rgba(16, 24, 40, 0.06);
+
+  --accent:        #ddd3fb;
+  --accent-ink:    #3b2a74;
+  --success:       #cdebd4;
+  --danger:        #fbd2d6;
+  --warning:       #fbeec4;
+  --info:          #d2e7fa;
+
+  --trap:          var(--danger);
+  --formula:       var(--info);
+  --concept:       var(--accent);
+  --shortcut:      var(--success);
+}
+
+:root[data-theme="dark"] {
+  --canvas:        #070a12;
+  --surface:       #0d1322;
+  --surface-muted: #11172a;
+  --surface-sunk:  #090d16;
+
+  --ink:           #f1f5f9;
+  --ink-soft:      #cbd5e1;
+  --ink-faint:     #94a3b8;
+
+  --line:          #1e293b;
+  --line-width:    1px;
+  --radius:        14px;
+  --radius-lg:     20px;
+  --radius-pill:   999px;
+  --shadow:        0 2px 8px rgba(0, 0, 0, 0.5);
+  --shadow-sm:     0 1px 3px rgba(0, 0, 0, 0.4);
+
+  --accent:        #7c3aed;
+  --accent-ink:    #f5f3ff;
+  --success:       #10b981;
+  --danger:        #f43f5e;
+  --warning:       #f59e0b;
+  --info:          #22d3ee;
+
+  --trap:          var(--warning);
+  --formula:       var(--info);
+  --concept:       var(--accent);
+  --shortcut:      var(--success);
+}
+
+/* Respect the OS preference only before a choice is stored. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+  }
+}

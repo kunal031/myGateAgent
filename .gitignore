@@ -14,6 +14,9 @@ __pycache__/
 *.db
 *.sqlite
 *.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
 
 # ---- Node / Next.js ----
 node_modules/
@@ -22,11 +25,28 @@ out/
 *.tsbuildinfo
 next-env.d.ts
 
-# ---- Large ingested sources (683 MB; kept local, not in git) ----
+# ---- Large source material (1.1 GB+; kept local, not in git) ----
+# Books, PYQ papers and notes you supply. Regenerable from their origins:
+# see docs/SOURCES.md for where each set came from.
+books/
 backend/data/documents/
+backend/data/inbox/
 backend/data/chroma_db/
 backend/data/page_images/
 backend/data/transcripts/
+
+# Runtime state (quota counters, job progress)
+backend/data/.ratelimit_*.json
+backend/data/*.log
+# Scratch output from CLI runs and import tests.
+backend/data/confirm_result.json
+
+# Derived retrieval indexes — rebuildable from source_chunks via
+# POST /api/agent/index/build
+backend/data/vectors/
+
+# Database dumps: ~180 MB each, and reproducible from the database itself.
+backend/data/backups/
 
 # ---- OS / editor ----
 .DS_Store

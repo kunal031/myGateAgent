@@ -1,0 +1,460 @@
+"""Revision feed: ranked, paginated cards, and what has been seen."""
+
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from ..core.database import get_db
+from ..models.concepts import Concept
+from ..models.models import FeedCard, Subject, Topic
+from ..models.tags import ConceptTag, TagType
+from ..models.rotation import CardView
+from ..services.feed.progress import record_card_recalled, record_card_seen
+from ..services.feed.ranking import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, get_feed_page
+from ..services.feed.tagging import (
+    card_metadata, related_cards, set_card_tags, slugify,
+)
+
+router = APIRouter(prefix="/api/feed", tags=["Feed"])
+
+
+@router.get("")
+def get_feed(
+    subject_slug: str | None = None,
+    topic_slug: str | None = None,
+    card_type: str | None = None,
+    mode: str | None = None,
+    source_type: str | None = None,
+    tag: str | None = None,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
+    db: Session = Depends(get_db),
+):
+    """One page of the feed, ranked by base weight plus a per-mistake boost.
+
+    Returns next_offset for infinite scroll; null means the end. Ranking and
+    slicing happen in SQL, so response size does not grow with the library.
+    """
+    page = get_feed_page(
+        db,
+        subject_slug=subject_slug,
+        topic_slug=topic_slug,
+        card_type=card_type,
+        mode=mode,
+        source_type=source_type,
+        tag=tag,
+        offset=offset,
+        limit=limit,
+    )
+    return {
+        "items": page.items,
+        "next_offset": page.next_offset,
+        "total": page.total,
+    }
+
+
+def _view_for(db: Session, card_id: int) -> CardView:
+    view = db.query(CardView).filter(CardView.card_id == card_id).first()
+    if view is None:
+        view = CardView(card_id=card_id)
+        db.add(view)
+    return view
+
+
+@router.post("/cards/{card_id}/seen")
+def mark_seen(card_id: int, db: Session = Depends(get_db)):
+    """Record that a card was shown, without claiming it was learned."""
+    card = db.query(FeedCard).filter(FeedCard.id == card_id).first()
+    if card is None:
+        raise HTTPException(404, "No such card")
+
+    view = _view_for(db, card_id)
+    view.seen_count = (view.seen_count or 0) + 1
+    view.last_seen_at = datetime.utcnow()
+    record_card_seen(db, card)
+    db.commit()
+    return {"card_id": card_id, "seen_count": view.seen_count}
+
+
+@router.post("/cards/{card_id}/recall")
+def mark_recalled(card_id: int, db: Session = Depends(get_db)):
+    """Marked "got it": schedule the next review further out."""
+    card = db.query(FeedCard).filter(FeedCard.id == card_id).first()
+    if card is None:
+        raise HTTPException(404, "No such card")
+
+    view = _view_for(db, card_id)
+    view.record_recall()
+    # The recall has to land before the concept is re-evaluated, since
+    # "learned" means every card in it has been recalled and this one has
+    # only just become true.
+    db.flush()
+    state = record_card_recalled(db, card)
+    db.commit()
+    return {
+        "card_id": card_id,
+        "recall_count": view.recall_count,
+        "mastered": view.mastered,
+        "due_at": view.due_at.isoformat() if view.due_at else None,
+        "concept_status": state.status if state else None,
+    }
+
+
+@router.get("/due")
+def due_for_revision(
+    limit: int = Query(default=DEFAULT_PAGE_SIZE, le=MAX_PAGE_SIZE),
+    db: Session = Depends(get_db),
+):
+    """Cards whose review date has arrived, soonest-overdue first."""
+    now = datetime.utcnow()
+    rows = (
+        db.query(CardView, FeedCard)
+        .join(FeedCard, CardView.card_id == FeedCard.id)
+        .filter(CardView.due_at.isnot(None), CardView.due_at <= now)
+        .order_by(CardView.due_at.asc())
+        .limit(limit).all()
+    )
+    return {
+        "items": [
+            {
+                "id": card.id,
+                "title": card.title,
+                "content": card.content,
+                "takeaway": card.takeaway,
+                "card_type": card.card_type,
+                "mode": card.mode,
+                "provenance": card.provenance or "",
+                "recall_count": view.recall_count,
+                "due_at": view.due_at.isoformat() if view.due_at else None,
+            }
+            for view, card in rows
+        ],
+        "total": len(rows),
+    }
+
+
+class UserCardPayload(BaseModel):
+    """A card the student writes themselves."""
+
+    subject_slug: str
+    topic_slug: str
+    title: str
+    content: str
+    takeaway: str = ""
+    card_type: str = "CONCEPT"
+    mode: str = "ADVANCED"
+    difficulty: str = "Standard"
+    concept_id: int | None = None
+    # Chapter name, related concepts, anything worth filtering by later.
+    tags: list[str] = Field(default_factory=list)
+
+
+def _clean_tags(tags: list[str]) -> str:
+    """Normalise to a comma-separated string with no empties or commas.
+
+    A comma inside a tag would split it into two on read, so it is stripped
+    rather than escaped -- these are short labels, not prose.
+    """
+    seen: list[str] = []
+    for raw in tags:
+        tag = raw.replace(",", " ").strip()
+        if tag and tag.lower() not in {t.lower() for t in seen}:
+            seen.append(tag[:60])
+    return ",".join(seen[:12])
+
+
+def _card_response(card: FeedCard) -> dict:
+    return {
+        "id": card.id,
+        "title": card.title,
+        "content": card.content,
+        "takeaway": card.takeaway,
+        "card_type": card.card_type,
+        "mode": card.mode,
+        "difficulty": card.difficulty,
+        "source_type": card.source_type,
+        "tags": [t for t in (card.tags or "").split(",") if t],
+        "subject_id": card.subject_id,
+        "topic_id": card.topic_id,
+        "concept_id": card.concept_id,
+        "provenance": card.provenance or "",
+    }
+
+
+@router.post("", status_code=201)
+def create_card(payload: UserCardPayload, db: Session = Depends(get_db)):
+    """Add a card by hand.
+
+    Marked source_type="user" so it is distinguishable everywhere from
+    generated content, and so the feed can show only these when asked. It
+    carries no provenance because there is no source chunk behind it -- the
+    student is the source, which the card's own badge says.
+    """
+    title = payload.title.strip()
+    content = payload.content.strip()
+    if not title or not content:
+        raise HTTPException(400, "A card needs a title and content")
+
+    subject = db.query(Subject).filter(Subject.slug == payload.subject_slug).first()
+    if subject is None:
+        raise HTTPException(404, f"No subject {payload.subject_slug!r}")
+    topic = (
+        db.query(Topic)
+        .filter(Topic.slug == payload.topic_slug,
+                Topic.subject_id == subject.id)
+        .first()
+    )
+    if topic is None:
+        raise HTTPException(404, f"No topic {payload.topic_slug!r} in that subject")
+
+    if payload.concept_id is not None:
+        concept = db.query(Concept).filter(
+            Concept.id == payload.concept_id,
+            Concept.topic_id == topic.id,
+        ).first()
+        if concept is None:
+            raise HTTPException(404, "That concept is not in this topic")
+
+    card = FeedCard(
+        subject_id=subject.id,
+        topic_id=topic.id,
+        concept_id=payload.concept_id,
+        mode=payload.mode,
+        card_type=payload.card_type,
+        title=title[:200],
+        content=content,
+        takeaway=(payload.takeaway.strip() or title)[:2000],
+        difficulty=payload.difficulty,
+        source_type="user",
+        tags=_clean_tags(payload.tags),
+        provenance="",
+        review_status="approved",
+        # A card the student chose to write is worth more to them than one
+        # they have never seen. Every generated card sits at 1, so without
+        # this a new card sorts last by id and is invisible in the feed it
+        # was written for. Below one mistake's boost, so remediation still
+        # outranks it.
+        base_weight=2,
+    )
+    db.add(card)
+    db.commit()
+    db.refresh(card)
+    return _card_response(card)
+
+
+@router.patch("/{card_id}")
+def update_card(card_id: int, payload: UserCardPayload,
+                db: Session = Depends(get_db)):
+    """Edit a card the student wrote.
+
+    Generated cards are not editable here: they are reproducible from their
+    source, and silently diverging from it would make the citation a lie.
+    """
+    card = db.query(FeedCard).filter(FeedCard.id == card_id).first()
+    if card is None:
+        raise HTTPException(404, "No such card")
+    if card.source_type != "user":
+        raise HTTPException(
+            403, "Only cards you wrote can be edited; this one is generated"
+        )
+
+    title = payload.title.strip()
+    content = payload.content.strip()
+    if not title or not content:
+        raise HTTPException(400, "A card needs a title and content")
+
+    card.title = title[:200]
+    card.content = content
+    card.takeaway = (payload.takeaway.strip() or title)[:2000]
+    card.card_type = payload.card_type
+    card.mode = payload.mode
+    card.difficulty = payload.difficulty
+    card.tags = _clean_tags(payload.tags)
+    db.commit()
+    db.refresh(card)
+    return _card_response(card)
+
+
+@router.delete("/{card_id}", status_code=204)
+def delete_card(card_id: int, db: Session = Depends(get_db)):
+    """Remove a card the student wrote, and anything tracking it."""
+    card = db.query(FeedCard).filter(FeedCard.id == card_id).first()
+    if card is None:
+        raise HTTPException(404, "No such card")
+    if card.source_type != "user":
+        raise HTTPException(
+            403, "Only cards you wrote can be deleted; this one is generated"
+        )
+    # CardView has a foreign key to the card, so it goes first.
+    db.query(CardView).filter(CardView.card_id == card_id).delete()
+    db.delete(card)
+    db.commit()
+
+
+class TagInput(BaseModel):
+    name: str
+    type: str | None = None
+    role: str | None = None
+    note: str | None = None
+
+
+@router.get("/{card_id}/metadata")
+def card_metadata_endpoint(card_id: int, db: Session = Depends(get_db)):
+    """Ancestry and typed tags for a hover popover.
+
+    Separate from the feed payload rather than inlined: tags are needed on
+    mouse-over for one card, while the feed returns thirty at a time, and
+    joining them into every page would pay for the 29 never hovered.
+    """
+    data = card_metadata(db, card_id)
+    if data is None:
+        raise HTTPException(404, "No such card")
+    return data
+
+
+@router.get("/{card_id}/related")
+def related_cards_endpoint(
+    card_id: int,
+    limit: int = Query(default=8, ge=1, le=30),
+    db: Session = Depends(get_db),
+):
+    """Cards reachable from this one through shared tags."""
+    if db.query(FeedCard.id).filter(FeedCard.id == card_id).first() is None:
+        raise HTTPException(404, "No such card")
+    return {"items": related_cards(db, card_id, limit=limit)}
+
+
+@router.put("/{card_id}/tags")
+def set_tags_endpoint(
+    card_id: int, tags: list[TagInput], db: Session = Depends(get_db),
+):
+    """Replace a card's tags.
+
+    PUT rather than POST: the client sends the list it wants and does not
+    diff against what is stored, so a retry cannot double-apply.
+    """
+    card = db.query(FeedCard).filter(FeedCard.id == card_id).first()
+    if card is None:
+        raise HTTPException(404, "No such card")
+
+    set_card_tags(
+        db, card,
+        [t.model_dump() for t in tags],
+        added_by="user",
+    )
+    db.commit()
+    return card_metadata(db, card_id)
+
+
+@router.get("/tags/browse")
+def browse_tags(
+    tag_type: str | None = None,
+    q: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """The tag vocabulary, for autocomplete and the tag browser.
+
+    Ordered by usage so the common tags surface first, which is what makes
+    autocomplete converge on a shared vocabulary instead of growing
+    synonyms.
+    """
+    query = db.query(ConceptTag)
+    if tag_type and tag_type != "all":
+        query = query.filter(ConceptTag.tag_type == tag_type)
+    if q:
+        query = query.filter(ConceptTag.slug.contains(slugify(q)))
+
+    rows = (
+        query.order_by(ConceptTag.usage_count.desc(), ConceptTag.name)
+        .limit(limit).all()
+    )
+    return {
+        "items": [
+            {
+                "id": t.id,
+                "name": t.name,
+                "slug": t.slug,
+                "type": t.tag_type,
+                "label": TagType.LABELS.get(t.tag_type, "Concept"),
+                "usage_count": t.usage_count,
+            }
+            for t in rows
+        ],
+        "types": [
+            {"value": v, "label": TagType.LABELS[v]} for v in TagType.ALL
+        ],
+    }
+
+
+@router.get("/progress")
+def feed_progress(
+    subject_slug: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """Where the student is, for the header above the feed.
+
+    The feed was directionless partly for want of this: a ranked list says
+    nothing about position, so finishing a concept felt like no progress at
+    all.
+    """
+    from ..models.concepts import Concept, ConceptProgress, ConceptStatus
+    from ..services.feed.ordering import _prerequisite_map
+    from ..services.feed.progress import learned_concept_ids
+
+    concepts = db.query(Concept)
+    if subject_slug and subject_slug != "all":
+        subject = db.query(Subject).filter(Subject.slug == subject_slug).first()
+        if subject is None:
+            raise HTTPException(404, f"No subject {subject_slug!r}")
+        concepts = concepts.filter(Concept.subject_id == subject.id)
+    rows = concepts.all()
+
+    learned = learned_concept_ids(db)
+    graph = _prerequisite_map(db)
+    ids = {c.id for c in rows}
+
+    done = len(ids & learned)
+    ready = sum(
+        1 for c in rows
+        if c.id not in learned and all(p in learned for p in graph.get(c.id, []))
+    )
+
+    due = (
+        db.query(CardView)
+        .filter(CardView.due_at.isnot(None), CardView.due_at <= datetime.utcnow())
+        .count()
+    )
+
+    # What to open next: the lowest-sequence ready concept, which is where
+    # the teaching order says to go.
+    nxt = sorted(
+        (c for c in rows
+         if c.id not in learned
+         and all(p in learned for p in graph.get(c.id, []))),
+        key=lambda c: (c.sequence or 0, c.id),
+    )
+    upcoming = nxt[0] if nxt else None
+
+    statuses = dict(
+        db.query(ConceptProgress.status, func.count(ConceptProgress.id))
+        .group_by(ConceptProgress.status).all()
+    )
+
+    return {
+        "concepts_total": len(rows),
+        "concepts_learned": done,
+        "concepts_ready": ready,
+        "cards_due": due,
+        "next_concept": (
+            {"id": upcoming.id, "name": upcoming.name} if upcoming else None
+        ),
+        "statuses": {
+            k: statuses.get(k, 0)
+            for k in (ConceptStatus.LEARNING, ConceptStatus.LEARNED,
+                      ConceptStatus.REVISED, ConceptStatus.MASTERED)
+        },
+    }
