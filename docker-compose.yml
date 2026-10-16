@@ -66,6 +66,13 @@ services:
       # every deployment and readable in the source.
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # Optional: blank disables Google sign-in rather than half-enabling
+      # it. The redirect URIs are browser-reachable addresses, so they
+      # name localhost and not the compose hostnames.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:8000/api/auth/google/callback}
+      OAUTH_SUCCESS_REDIRECT: ${OAUTH_SUCCESS_REDIRECT:-http://localhost:3000/auth/callback}
     volumes:
       # The OCR cache and rate-limit state. A named volume keeps them
       # across restarts; sharing them across containers needs object
