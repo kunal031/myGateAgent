@@ -27,6 +27,7 @@ class CardView(Base):
     __tablename__ = "card_views"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     card_id = Column(Integer, ForeignKey("feed_cards.id"),
                      nullable=False, index=True)
 

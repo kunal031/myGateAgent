@@ -80,6 +80,7 @@ class ConceptProgress(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     concept_id = Column(Integer, ForeignKey("concepts.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
 
     status = Column(String(20), default=ConceptStatus.NOT_STARTED, index=True)
     mode_completed = Column(String(20), default="")  # highest mode finished

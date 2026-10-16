@@ -33,6 +33,7 @@ class AssistantThread(Base):
     __tablename__ = "assistant_threads"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     title = Column(String(200), default="New conversation")
     language = Column(String(12), default=Language.ENGLISH)
 

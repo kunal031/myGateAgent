@@ -54,6 +54,7 @@ class ExamSession(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     name = Column(String(200), default="Mock Test")
     kind = Column(String(10), default=SessionKind.TEST, index=True)
     pattern = Column(String(30), default="full")   # full, subject, custom, topic
