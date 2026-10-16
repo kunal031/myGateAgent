@@ -6,9 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from ..core.auth import current_user
 from ..core.database import get_db
 from ..models.assistant import AssistantMessage, AssistantThread, Language
 from ..models.models import FeedCard, Subject
+from ..models.users import User
 from ..services.assistant import answer, parse_intent
 from ..services.assistant.intent import Intent
 
@@ -42,7 +44,8 @@ def _card_intent(card: FeedCard, query: str, language: str | None):
 
 
 @router.post("/ask")
-def ask(payload: AskRequest, db: Session = Depends(get_db)):
+def ask(payload: AskRequest, db: Session = Depends(get_db),
+        user: User = Depends(current_user)):
     """Answer a question, or resolve a request for cards into feed filters.
 
     One endpoint for the single search box: the intent decides whether the
@@ -84,7 +87,7 @@ def ask(payload: AskRequest, db: Session = Depends(get_db)):
             "language": language,
         }
 
-    thread = _thread_for(db, payload, card, language)
+    thread = _thread_for(db, payload, card, language, user.id)
     history = list(thread.messages)
 
     db.add(AssistantMessage(thread_id=thread.id, role="user", content=query))
@@ -119,9 +122,11 @@ def ask(payload: AskRequest, db: Session = Depends(get_db)):
 
 @router.get("/threads")
 def list_threads(limit: int = Query(default=20, le=50),
-                 db: Session = Depends(get_db)):
+                 db: Session = Depends(get_db),
+                 user: User = Depends(current_user)):
     threads = (
         db.query(AssistantThread)
+        .filter(AssistantThread.user_id == user.id)
         .order_by(AssistantThread.updated_at.desc())
         .limit(limit).all()
     )
@@ -139,8 +144,13 @@ def list_threads(limit: int = Query(default=20, le=50),
 
 
 @router.get("/threads/{thread_id}")
-def get_thread(thread_id: int, db: Session = Depends(get_db)):
-    thread = db.query(AssistantThread).filter(AssistantThread.id == thread_id).first()
+def get_thread(thread_id: int, db: Session = Depends(get_db),
+               user: User = Depends(current_user)):
+    # 404 rather than 403 on someone else's thread: a 403 confirms it exists.
+    thread = db.query(AssistantThread).filter(
+        AssistantThread.id == thread_id,
+        AssistantThread.user_id == user.id,
+    ).first()
     if thread is None:
         raise HTTPException(404, "No such thread")
 
@@ -163,8 +173,12 @@ def get_thread(thread_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/threads/{thread_id}")
-def delete_thread(thread_id: int, db: Session = Depends(get_db)):
-    thread = db.query(AssistantThread).filter(AssistantThread.id == thread_id).first()
+def delete_thread(thread_id: int, db: Session = Depends(get_db),
+                  user: User = Depends(current_user)):
+    thread = db.query(AssistantThread).filter(
+        AssistantThread.id == thread_id,
+        AssistantThread.user_id == user.id,
+    ).first()
     if thread is None:
         raise HTTPException(404, "No such thread")
     db.delete(thread)
@@ -173,12 +187,14 @@ def delete_thread(thread_id: int, db: Session = Depends(get_db)):
 
 
 def _thread_for(db: Session, payload: AskRequest, card: FeedCard | None,
-                language: str) -> AssistantThread:
+                language: str, user_id: int) -> AssistantThread:
     """Continue the named thread, or open one titled after what prompted it."""
     if payload.thread_id:
         thread = (
             db.query(AssistantThread)
-            .filter(AssistantThread.id == payload.thread_id).first()
+            .filter(AssistantThread.id == payload.thread_id,
+                    AssistantThread.user_id == user_id)
+            .first()
         )
         if thread is None:
             raise HTTPException(404, "No such thread")
@@ -186,6 +202,7 @@ def _thread_for(db: Session, payload: AskRequest, card: FeedCard | None,
 
     title = card.title[:200] if card else payload.query.strip()[:200]
     thread = AssistantThread(
+        user_id=user_id,
         title=title, language=language,
         card_id=card.id if card else None,
         subject_id=card.subject_id if card else None,

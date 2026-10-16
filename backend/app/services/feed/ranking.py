@@ -49,7 +49,8 @@ def _mistake_weight_subquery():
 SCORING_POOL = 400
 
 
-def _ready_ordered_rows(db, query, *, offset: int, limit: int):
+def _ready_ordered_rows(db, query, *, offset: int, limit: int,
+                        user_id: int | None = None):
     """Score a pool of candidates, then lay out one page as a mix.
 
     Paging is applied after scoring rather than in SQL: the mix is a
@@ -75,6 +76,7 @@ def _ready_ordered_rows(db, query, *, offset: int, limit: int):
         db,
         [(card, subject, topic, concepts.get(card.concept_id), int(errors or 0))
          for card, subject, topic, errors, _weight in pool],
+        user_id=user_id,
     )
     page = build_page(scored, offset + limit)[offset:offset + limit]
 
@@ -94,6 +96,7 @@ def get_feed_page(
     topic_slug: str | None = None,
     source_type: str | None = None,
     tag: str | None = None,
+    user_id: int | None = None,
     offset: int = 0,
     limit: int = DEFAULT_PAGE_SIZE,
 ) -> FeedPage:
@@ -122,6 +125,13 @@ def get_feed_page(
         query = query.filter(Subject.slug == subject_slug)
     if topic_slug and topic_slug != "all":
         query = query.filter(Topic.slug == topic_slug)
+
+    # Generated cards (user_id null) are shared: they cost quota to make
+    # and are identical for everyone. A hand-written card belongs to the
+    # student who wrote it and must not appear in anyone else's feed.
+    query = query.filter(
+        (FeedCard.user_id.is_(None)) | (FeedCard.user_id == user_id)
+    )
     if card_type and card_type != "all":
         query = query.filter(FeedCard.card_type == card_type)
     if mode and mode != "all":
@@ -147,7 +157,8 @@ def get_feed_page(
         # Everything else is ordered by readiness and laid out as a mix.
         # Sorting by weight put 654 of 659 cards at the same score, so the
         # feed fell back to id order -- the order they were generated in.
-        rows = _ready_ordered_rows(db, query, offset=offset, limit=limit)
+        rows = _ready_ordered_rows(db, query, offset=offset, limit=limit,
+                                   user_id=user_id)
 
     items = [
         {

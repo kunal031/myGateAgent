@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from ..core.auth import admin_user
 from ..core.database import get_db
 from ..models.sources import Source, SourceChunk
 from ..services import retrieval
@@ -85,8 +86,9 @@ def index_status(db: Session = Depends(get_db)):
 
 @router.post("/index/build")
 def build_index(
-    batch_limit: int = Query(default=200, le=2000),
+batch_limit: int = Query(default=200, le=2000),
     db: Session = Depends(get_db),
+    _admin=Depends(admin_user),
 ):
     """Embed and index chunks that are not yet indexed.
 

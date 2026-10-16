@@ -64,7 +64,7 @@ def _pick(db: Session, slugs: tuple[str, ...], marks: int, count: int,
     return picked, count - len(picked)
 
 
-def create_session(db: Session, pattern: ExamPattern, *,
+def create_session(db: Session, pattern: ExamPattern, *, user_id: int | None = None,
                    name: str | None = None,
                    subject_id: int | None = None,
                    topic_id: int | None = None,
@@ -95,6 +95,7 @@ def create_session(db: Session, pattern: ExamPattern, *,
         raise NotEnoughQuestions("Could not assemble any questions")
 
     session = ExamSession(
+        user_id=user_id,
         name=name or pattern.name,
         kind=kind,
         shortfall_note="; ".join(shortfalls),
@@ -172,14 +173,22 @@ def save_answer(db: Session, session_id: int, position: int, *,
     return item
 
 
-def submit_session(db: Session, session_id: int) -> ExamSession | None:
+def submit_session(db: Session, session_id: int, *,
+                   user_id: int | None = None) -> ExamSession | None:
     """Score every item, record attempts, and close the session.
 
     Scoring happens only here. Each answered item also writes an Attempt and
     updates the mistake registry, so a mock feeds the same analytics and
     remedial feed as a quiz drill.
     """
-    session = db.query(ExamSession).filter(ExamSession.id == session_id).first()
+    query = db.query(ExamSession).filter(ExamSession.id == session_id)
+    if user_id is not None:
+        # Defends itself rather than trusting its caller. The endpoint
+        # already scopes via _require_session, but this function writes
+        # attempts and mistakes under session.user_id -- submitting
+        # somebody else's paper would file the result against them.
+        query = query.filter(ExamSession.user_id == user_id)
+    session = query.first()
     if session is None or not session.is_open:
         return session
 
@@ -205,7 +214,8 @@ def submit_session(db: Session, session_id: int) -> ExamSession | None:
         # "test" filed every quiz attempt under the wrong mode, which the
         # analytics then reported as test performance.
         db.add(Attempt(
-            question_id=question.id, user_answer=item.user_answer,
+            question_id=question.id, user_id=session.user_id,
+            user_answer=item.user_answer,
             is_correct=is_correct, marks_obtained=marks,
             time_spent_seconds=item.time_spent_seconds, mode=session.kind,
         ))
@@ -213,7 +223,9 @@ def submit_session(db: Session, session_id: int) -> ExamSession | None:
         if not is_correct:
             mistake = (
                 db.query(MistakeRegistry)
-                .filter(MistakeRegistry.question_id == question.id).first()
+                .filter(MistakeRegistry.question_id == question.id,
+                        MistakeRegistry.user_id == session.user_id)
+                .first()
             )
             if mistake:
                 mistake.error_count += 1
@@ -222,7 +234,8 @@ def submit_session(db: Session, session_id: int) -> ExamSession | None:
                 mistake.mastery_level = max(0, mistake.mastery_level - 1)
             else:
                 db.add(MistakeRegistry(
-                    question_id=question.id, topic_id=question.topic_id,
+                    question_id=question.id, user_id=session.user_id,
+                    topic_id=question.topic_id,
                     subject_id=question.subject_id, error_count=1,
                     last_user_answer=item.user_answer,
                 ))
