@@ -2,14 +2,20 @@
 
 import logging
 from datetime import datetime
+from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
 from ..core.auth import current_user
 from ..core.config import settings
 from ..core.database import get_db
+from ..core.google_oauth import (
+    GoogleIdentity, authorization_url, exchange_code, login_store,
+    verify_id_token,
+)
 from ..core.security import (
     ACCESS_TOKEN_MINUTES, AuthError, MIN_PASSWORD_CHARS, create_access_token,
     create_refresh_token, decode_token, hash_password, verify_password,
@@ -51,6 +57,10 @@ def _public(user: User) -> dict:
         "email": user.email,
         "display_name": user.display_name or "",
         "role": user.role,
+        "avatar_url": user.avatar_url or None,
+        # Lets the account screen offer "set a password" to a Google-only
+        # account rather than "change password", which it has none to change.
+        "has_password": user.has_password,
     }
 
 
@@ -100,10 +110,17 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     # The password is verified even when no account matched, so the reply
     # takes the same time either way and does not reveal which emails are
     # registered.
+    # A Google-only account has no hash at all, so the placeholder stands
+    # in for it too -- otherwise verify_password receives None and raises,
+    # turning a wrong-credentials case into a 500 that also reveals the
+    # account exists and uses Google.
     placeholder = "$2b$12$" + "." * 53
-    ok = verify_password(payload.password, user.password_hash if user else placeholder)
+    ok = verify_password(
+        payload.password,
+        user.password_hash if user and user.password_hash else placeholder,
+    )
 
-    if user is None or not ok or not user.is_active:
+    if user is None or not user.password_hash or not ok or not user.is_active:
         raise HTTPException(401, "That email and password do not match")
 
     user.last_login_at = datetime.utcnow()
@@ -147,3 +164,143 @@ def logout(user: User = Depends(current_user), db: Session = Depends(get_db)):
 @router.get("/me")
 def me(user: User = Depends(current_user)):
     return _public(user)
+
+
+# ---------------------------------------------------------------- Google
+
+@router.get("/google/config")
+def google_config():
+    """Whether to show the Google button.
+
+    The frontend asks rather than being told at build time, so the same
+    bundle works against a deployment with Google configured and one
+    without. Returns no secret -- only whether sign-in is possible.
+    """
+    return {"enabled": settings.google_oauth_configured}
+
+
+@router.get("/google/start")
+def google_start(next: str = ""):
+    """Begin Google sign-in by redirecting to Google's consent screen."""
+    if not settings.auth_configured:
+        raise HTTPException(503, "Authentication is not configured on this server")
+    if not settings.google_oauth_configured:
+        raise HTTPException(503, "Google sign-in is not configured on this server")
+
+    return RedirectResponse(authorization_url(next_url=next), status_code=307)
+
+
+def _link_or_create(db: Session, identity: GoogleIdentity) -> User:
+    """Find the account behind a verified Google identity, or make one.
+
+    Three cases, in this order:
+
+    1. **Known `sub`** -- the normal return visit. Matched on `sub` and not
+       email, so an account whose Google email changed is still recognised.
+    2. **Known email, no `sub`** -- someone who registered with a password
+       and is now using the Google button. The Google identity is attached
+       to that existing account. This is only safe because the email was
+       verified by Google upstream; an unverified one would let a stranger
+       claim the account by signing up to Google with its address.
+    3. **Neither** -- a new account.
+    """
+    user = db.query(User).filter(User.google_sub == identity.sub).first()
+
+    if user is None:
+        user = db.query(User).filter(User.email == identity.email).first()
+        if user is not None:
+            logger.info("Linking Google identity to existing account %s", user.email)
+            user.google_sub = identity.sub
+
+    if user is None:
+        first = db.query(User.id).first() is None
+        user = User(
+            email=identity.email,
+            display_name=identity.name[:120],
+            # No password: this account signs in with Google only, until
+            # its owner sets one.
+            password_hash=None,
+            google_sub=identity.sub,
+            role=UserRole.ADMIN if first else UserRole.STUDENT,
+        )
+        db.add(user)
+        logger.info("Created %s from Google as %s", identity.email, user.role)
+
+    # Refreshed each time: Google's avatar URLs expire, and the display
+    # name may have changed upstream.
+    if identity.picture:
+        user.avatar_url = identity.picture[:512]
+    if identity.name and not user.display_name:
+        user.display_name = identity.name[:120]
+
+    user.last_login_at = datetime.utcnow()
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def _failure_redirect(message: str) -> RedirectResponse:
+    """Send the browser back to the sign-in screen with a reason.
+
+    A redirect rather than a JSON error because the user is in a browser
+    mid-flow: a raw 401 body would leave them on a blank API page with no
+    way back.
+    """
+    base = settings.OAUTH_SUCCESS_REDIRECT
+    return RedirectResponse(f"{base}?{urlencode({'error': message})}", status_code=307)
+
+
+@router.get("/google/callback")
+def google_callback(
+    db: Session = Depends(get_db),
+    code: str = Query(default=""),
+    state: str = Query(default=""),
+    error: str = Query(default=""),
+):
+    """Where Google sends the browser back.
+
+    Tokens leave in the URL *fragment*, not the query string. A fragment is
+    never sent to a server and does not appear in server logs or the
+    Referer header, which a query parameter does -- that is the difference
+    between a token that stays in the browser and one that lands in an
+    access log.
+    """
+    if error:
+        # The ordinary case is the user pressing "cancel" on the consent
+        # screen, which is not an error worth alarming them about.
+        return _failure_redirect(
+            "Sign-in was cancelled" if error == "access_denied"
+            else "Google could not complete sign-in"
+        )
+
+    if not settings.google_oauth_configured:
+        return _failure_redirect("Google sign-in is not configured")
+    if not code or not state:
+        return _failure_redirect("That sign-in link was incomplete")
+
+    try:
+        # Consuming the state proves this callback belongs to a sign-in
+        # this server started, which is what stops a forged callback from
+        # logging someone into an attacker's account.
+        pending = login_store.consume(state)
+        id_token = exchange_code(code, pending.verifier)
+        identity = verify_id_token(id_token)
+    except AuthError as exc:
+        logger.warning("Google sign-in failed: %s", exc)
+        return _failure_redirect(str(exc))
+
+    user = _link_or_create(db, identity)
+
+    if not user.is_active:
+        return _failure_redirect("That account has been disabled")
+
+    tokens = _tokens(user)
+    fragment = urlencode({
+        "access_token": tokens["access_token"],
+        "refresh_token": tokens["refresh_token"],
+        "expires_in": tokens["expires_in"],
+        "next": pending.next_url or "/",
+    })
+    return RedirectResponse(
+        f"{settings.OAUTH_SUCCESS_REDIRECT}#{fragment}", status_code=307
+    )
