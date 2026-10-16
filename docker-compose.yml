@@ -1,0 +1,99 @@
+# The deployable shape of the application.
+#
+# Four services. Postgres holds everything -- 22 tables and 25k embeddings
+# in the same database, so semantic search and the filters applied to it
+# happen in one indexed query. Redis is present for the state Postgres
+# should not hold: rate-limit budgets shared across containers, per-user
+# quotas, and a cache for repeated assistant questions.
+#
+# The api container is deliberately not yet replicated. Three pieces of
+# state still live on its local disk -- the rate-limit counter, the OCR
+# cache and the query-embedding cache -- and two copies would each believe
+# they owned the whole API budget. The volume below is the seam where that
+# gets fixed; until then this runs one api and scales the worker instead.
+
+services:
+  postgres:
+    # pgvector on top of Postgres 18, so the vector column and its HNSW
+    # index exist without a separate extension build.
+    image: pgvector/pgvector:pg18
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gatemaster}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gatemaster}
+      POSTGRES_DB: ${POSTGRES_DB:-gatemaster}
+    volumes:
+      # Postgres 18 expects a single mount at /var/lib/postgresql, not at
+      # .../data as earlier images did. Mounting the old path makes the
+      # container refuse to start, reporting it as a failed major upgrade.
+      - pgdata:/var/lib/postgresql
+      # Runs once on an empty data directory: creates the vector
+      # extension, without which the halfvec column cannot be built.
+      - ./deploy/postgres-init:/docker-entrypoint-initdb.d:ro
+    ports:
+      # Exposed for psql and the backup CLI; drop this in production.
+      - "5433:5432"
+    healthcheck:
+      # The api waits on this rather than on the port, because Postgres
+      # accepts connections for a few seconds before it can answer.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gatemaster}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:8-alpine
+    # appendonly so a restart does not lose today's quota counters and
+    # let a user start the day over.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./backend
+    environment:
+      DB_TARGET: local
+      POSTGRES_URL: postgresql+psycopg://${POSTGRES_USER:-gatemaster}:${POSTGRES_PASSWORD:-gatemaster}@postgres:5432/${POSTGRES_DB:-gatemaster}
+      REDIS_URL: redis://redis:6379/0
+      # No defaults for either: a fallback JWT secret would be shared by
+      # every deployment and readable in the source.
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    volumes:
+      # The OCR cache and rate-limit state. A named volume keeps them
+      # across restarts; sharing them across containers needs object
+      # storage and Redis, which is the next step.
+      - apidata:/app/data
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        # Inlined into the client bundle at build time, so it has to be
+        # the address a browser can reach -- not the compose hostname.
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  apidata:

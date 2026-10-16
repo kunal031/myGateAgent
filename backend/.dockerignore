@@ -1,0 +1,19 @@
+# The build context is uploaded to the daemon before anything runs, so
+# anything large or secret here costs time or leaks.
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Secrets. .env.example is intentionally kept.
+.env
+.env.*
+!.env.example
+
+# Corpus, caches and dumps: hundreds of megabytes, and all reproducible
+# or mounted at runtime.
+data/
+gatemaster.db
+*.log
+
+.git/
