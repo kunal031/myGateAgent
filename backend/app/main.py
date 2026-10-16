@@ -7,7 +7,7 @@ and HTTP handling in api/.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import agent, assistant, exam, feed, quiz, stats, syllabus, papers
+from .api import agent, auth, assistant, exam, feed, quiz, stats, syllabus, papers
 from .core.config import settings
 from .core.lifespan import lifespan
 
@@ -28,6 +28,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(syllabus.router)
 app.include_router(feed.router)
 app.include_router(quiz.router)
