@@ -42,6 +42,12 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
     ]
 
+    # ---- Auth ----
+    #: Signs every token. Empty means the app refuses to start, rather
+    #: than falling back to a default that would let anyone forge a token
+    #: for any account -- a weak default here is worse than no auth.
+    JWT_SECRET: str = ""
+
     # ---- Gemini ----
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL_PRIMARY: str = "gemini-3.8-flash"
@@ -135,6 +141,16 @@ class Settings(BaseSettings):
     @property
     def gemini_configured(self) -> bool:
         return bool(self.GEMINI_API_KEY.strip())
+
+    @property
+    def auth_configured(self) -> bool:
+        """Whether tokens can be signed.
+
+        Deliberately has no default. A hardcoded fallback secret would
+        make every deployment share it, and anyone reading the source
+        could mint a token for any account on any instance.
+        """
+        return len(self.JWT_SECRET.strip()) >= 32
 
 
 settings = Settings()

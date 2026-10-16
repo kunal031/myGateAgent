@@ -7,8 +7,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from ..core.auth import current_user
 from ..core.database import get_db
 from ..data.curriculum import sort_subjects
+from ..models.users import User
 from ..models.exams import ExamSession, ExamStatus
 from ..models.models import Subject, Topic
 from ..services.exam import patterns as pattern_defs
@@ -39,7 +41,9 @@ class AnswerRequest(BaseModel):
 
 
 @router.get("/patterns")
-def list_patterns(db: Session = Depends(get_db)):
+def list_patterns(db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
     """Presets and the subjects available, for the pattern setter."""
     from ..models.models import Question
 
@@ -73,7 +77,9 @@ def list_patterns(db: Session = Depends(get_db)):
 
 
 @router.post("/start")
-def start_exam(payload: StartRequest, db: Session = Depends(get_db)):
+def start_exam(payload: StartRequest, db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
     """Assemble a paper and open a session (quiz or test)."""
     subject_id = None
     topic_id = None
@@ -107,7 +113,7 @@ def start_exam(payload: StartRequest, db: Session = Depends(get_db)):
 
     try:
         session = create_session(
-            db, pattern, name=payload.name, subject_id=subject_id,
+            db, pattern, user_id=user.id, name=payload.name, subject_id=subject_id,
             topic_id=topic_id, kind=payload.kind,
             question_type=payload.question_type, difficulty=payload.difficulty,
         )
@@ -118,13 +124,15 @@ def start_exam(payload: StartRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/{session_id}")
-def get_exam(session_id: int, db: Session = Depends(get_db)):
+def get_exam(session_id: int, db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
     """The full paper plus palette state, for rendering the exam screen.
 
     Correct answers are deliberately absent: the client never holds the key
     while the session is open.
     """
-    session = _require_session(db, session_id)
+    session = _require_session(db, session_id, user.id)
 
     questions = []
     for item in session.items:
@@ -149,8 +157,10 @@ def get_exam(session_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{session_id}/visit/{position}")
-def visit(session_id: int, position: int, db: Session = Depends(get_db)):
-    _require_session(db, session_id)
+def visit(session_id: int, position: int, db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    _require_session(db, session_id, user.id)
     item = visit_item(db, session_id, position)
     if item is None:
         raise HTTPException(404, "No such question in this session")
@@ -159,9 +169,11 @@ def visit(session_id: int, position: int, db: Session = Depends(get_db)):
 
 @router.post("/{session_id}/answer/{position}")
 def answer(session_id: int, position: int, payload: AnswerRequest,
-           db: Session = Depends(get_db)):
+           db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
     """Save an answer and/or the review flag. An empty answer clears it."""
-    session = _require_session(db, session_id)
+    session = _require_session(db, session_id, user.id)
     if not session.is_open:
         raise HTTPException(409, "This session has already been submitted")
 
@@ -177,17 +189,21 @@ def answer(session_id: int, position: int, payload: AnswerRequest,
 
 
 @router.post("/{session_id}/submit")
-def submit(session_id: int, db: Session = Depends(get_db)):
-    session = _require_session(db, session_id)
+def submit(session_id: int, db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    session = _require_session(db, session_id, user.id)
     if not session.is_open:
         return _session_summary(session)
-    return _session_summary(submit_session(db, session_id))
+    return _session_summary(submit_session(db, session_id, user_id=user.id))
 
 
 @router.get("/{session_id}/result")
-def result(session_id: int, db: Session = Depends(get_db)):
+def result(session_id: int, db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
     """Per-question outcome for a submitted paper, for analysis."""
-    session = _require_session(db, session_id)
+    session = _require_session(db, session_id, user.id)
     if session.is_open:
         raise HTTPException(409, "Submit the session before reviewing it")
 
@@ -223,9 +239,10 @@ def list_sessions(
     subject_slug: str | None = None,
     since: str | None = Query(default=None, description="ISO date, inclusive"),
     db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ):
     """Session history, newest first, filterable by kind, subject and date."""
-    query = db.query(ExamSession)
+    query = db.query(ExamSession).filter(ExamSession.user_id == user.id)
 
     if kind in {"quiz", "test"}:
         query = query.filter(ExamSession.kind == kind)
@@ -244,8 +261,21 @@ def list_sessions(
     return [_session_summary(s) for s in sessions]
 
 
-def _require_session(db: Session, session_id: int) -> ExamSession:
-    session = db.query(ExamSession).filter(ExamSession.id == session_id).first()
+def _require_session(db: Session, session_id: int, user_id: int) -> ExamSession:
+    """One student's session, or 404.
+
+    Scoped by owner, and every exam endpoint goes through here. A session
+    holds the answers and the score; fetching one by id alone would let
+    any signed-in account read -- and submit -- somebody else's paper.
+
+    404 rather than 403 for someone else's session: a 403 would confirm
+    the session exists.
+    """
+    session = (
+        db.query(ExamSession)
+        .filter(ExamSession.id == session_id, ExamSession.user_id == user_id)
+        .first()
+    )
     if session is None:
         raise HTTPException(404, "No such session")
     return session

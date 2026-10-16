@@ -8,6 +8,11 @@ pydantic==2.13.5
 pydantic-settings==2.15.0       # .env-backed settings
 python-multipart==0.0.32        # multipart uploads for /api/papers
 
+# ---- Auth ----
+PyJWT==2.12.1                   # access and refresh tokens
+bcrypt==5.0.0                   # password hashing
+email-validator==2.3.0          # pydantic EmailStr
+
 # Paper import: fetching a question page and parsing its HTML. All three
 # were already installed as transitive dependencies of gdown and
 # google-genai, so they worked without being declared -- and a clean

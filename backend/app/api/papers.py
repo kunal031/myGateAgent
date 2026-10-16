@@ -20,9 +20,11 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from ..core.auth import admin_user, current_user
 from ..core.database import get_db
 from ..models.models import Question, Subject, Topic
 from ..models.papers import ImportStatus, PaperSource, QuestionPaper
+from ..models.users import User
 from ..services.import_paper.explain import explain
 from ..services.import_paper.fetch import FetchError, fetch_url
 from ..services.import_paper.parse import parse_questions
@@ -142,7 +144,8 @@ def _preview(paper: QuestionPaper, parsed: list[dict]) -> dict:
 
 
 def _begin(db: Session, *, name: str, subject_slug: str, topic_slug: str,
-           source_kind: str, origin_url: str = "", file_name: str = "") -> QuestionPaper:
+           source_kind: str, user_id: int, origin_url: str = "",
+           file_name: str = "") -> QuestionPaper:
     """Create the paper row before parsing, so a failure leaves a record."""
     try:
         subject, topic = resolve_target(db, subject_slug, topic_slug)
@@ -151,7 +154,7 @@ def _begin(db: Session, *, name: str, subject_slug: str, topic_slug: str,
 
     paper = QuestionPaper(
         name=name[:250], subject_id=subject.id, topic_id=topic.id,
-        source_kind=source_kind, origin_url=origin_url[:1000],
+        user_id=user_id, source_kind=source_kind, origin_url=origin_url[:1000],
         file_name=file_name[:300], import_status=ImportStatus.PARSING,
     )
     db.add(paper)
@@ -202,6 +205,8 @@ def _note(db: Session, paper: QuestionPaper, note: str,
 
 def _parse_in_background(db: Session, paper_id: int, text: str) -> None:
     """Structure the fetched text into questions, then wait for review."""
+    # Not scoped by user_id, deliberately: these routes are admin-only,
+    # and an admin reviewing an import needs to see every paper.
     paper = db.query(QuestionPaper).filter(QuestionPaper.id == paper_id).first()
     if paper is None:
         return
@@ -267,7 +272,8 @@ def list_papers(
 
 
 @router.post("/import/url")
-def import_from_url(payload: UrlImportRequest, db: Session = Depends(get_db)):
+def import_from_url(payload: UrlImportRequest, db: Session = Depends(get_db),
+                    user: User = Depends(admin_user)):
     """Fetch a page, parse its questions, and return them for review.
 
     Nothing reaches the question bank here. A parse that guessed an answer
@@ -306,6 +312,7 @@ async def import_from_pdf(
     topic_slug: str = Form(...),
     name: str | None = Form(None),
     db: Session = Depends(get_db),
+    user: User = Depends(admin_user),
 ):
     """Same as the URL import, from an uploaded PDF."""
     if not (file.filename or "").lower().endswith(".pdf"):
@@ -363,12 +370,15 @@ async def import_from_pdf(
 @router.post("/{paper_id}/confirm")
 def confirm_import(
     paper_id: int, payload: ConfirmRequest, db: Session = Depends(get_db),
+    user: User = Depends(admin_user),
 ):
     """Write the reviewed questions into the bank.
 
     Explanations are written here rather than during parsing, because until
     the answers are confirmed there is nothing trustworthy to explain.
     """
+    # Not scoped by user_id, deliberately: these routes are admin-only,
+    # and an admin reviewing an import needs to see every paper.
     paper = db.query(QuestionPaper).filter(QuestionPaper.id == paper_id).first()
     if paper is None:
         raise HTTPException(404, "No such paper")
@@ -419,6 +429,8 @@ def paper_status(paper_id: int, db: Session = Depends(get_db)):
     Separate from GET /{id}, which returns every question: polling that once
     a second would send the whole paper back each time.
     """
+    # Not scoped by user_id, deliberately: these routes are admin-only,
+    # and an admin reviewing an import needs to see every paper.
     paper = db.query(QuestionPaper).filter(QuestionPaper.id == paper_id).first()
     if paper is None:
         raise HTTPException(404, "No such paper")
@@ -440,6 +452,8 @@ def paper_preview(paper_id: int, db: Session = Depends(get_db)):
     Held on the paper rather than in the response to the import call, so
     closing the page mid-parse does not lose the work it paid for.
     """
+    # Not scoped by user_id, deliberately: these routes are admin-only,
+    # and an admin reviewing an import needs to see every paper.
     paper = db.query(QuestionPaper).filter(QuestionPaper.id == paper_id).first()
     if paper is None:
         raise HTTPException(404, "No such paper")
@@ -450,6 +464,8 @@ def paper_preview(paper_id: int, db: Session = Depends(get_db)):
 @router.get("/{paper_id}")
 def get_paper(paper_id: int, db: Session = Depends(get_db)):
     """A paper and the questions it created."""
+    # Not scoped by user_id, deliberately: these routes are admin-only,
+    # and an admin reviewing an import needs to see every paper.
     paper = db.query(QuestionPaper).filter(QuestionPaper.id == paper_id).first()
     if paper is None:
         raise HTTPException(404, "No such paper")
@@ -480,6 +496,7 @@ def get_paper(paper_id: int, db: Session = Depends(get_db)):
 @router.patch("/questions/{question_id}")
 def edit_question(
     question_id: int, payload: QuestionEdit, db: Session = Depends(get_db),
+    user: User = Depends(admin_user),
 ):
     """Correct an imported answer or rewrite its solution."""
     question = db.query(Question).filter(Question.id == question_id).first()
@@ -527,12 +544,15 @@ def delete_paper(
     paper_id: int,
     delete_questions: bool = Query(default=False),
     db: Session = Depends(get_db),
+    user: User = Depends(admin_user),
 ):
     """Remove a paper, and optionally the questions it imported.
 
     Questions are kept by default: they may already have been attempted, and
     an attempt pointing at a deleted question loses that history.
     """
+    # Not scoped by user_id, deliberately: these routes are admin-only,
+    # and an admin reviewing an import needs to see every paper.
     paper = db.query(QuestionPaper).filter(QuestionPaper.id == paper_id).first()
     if paper is None:
         raise HTTPException(404, "No such paper")

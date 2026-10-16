@@ -39,6 +39,16 @@ ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("question_papers", "progress_done", "INTEGER DEFAULT 0"),
     ("question_papers", "progress_total", "INTEGER DEFAULT 0"),
     ("question_papers", "progress_note", "VARCHAR(120) DEFAULT ''"),
+    # Ownership. Nullable so existing rows survive; the backfill in
+    # cli/bootstrap_users.py assigns them to the first account.
+    ("attempts", "user_id", "INTEGER"),
+    ("mistake_registry", "user_id", "INTEGER"),
+    ("card_views", "user_id", "INTEGER"),
+    ("concept_progress", "user_id", "INTEGER"),
+    ("exam_sessions", "user_id", "INTEGER"),
+    ("assistant_threads", "user_id", "INTEGER"),
+    ("question_papers", "user_id", "INTEGER"),
+    ("feed_cards", "user_id", "INTEGER"),
 ]
 
 INDEXES: list[tuple[str, str]] = [
@@ -49,6 +59,12 @@ INDEXES: list[tuple[str, str]] = [
     ("ix_feed_cards_tags", "feed_cards(tags)"),
     ("ix_questions_paper_id", "questions(paper_id)"),
     ("ix_questions_solution_source", "questions(solution_source)"),
+    ("ix_attempts_user_id", "attempts(user_id)"),
+    ("ix_card_views_user_id", "card_views(user_id)"),
+    ("ix_concept_progress_user_id", "concept_progress(user_id)"),
+    ("ix_exam_sessions_user_id", "exam_sessions(user_id)"),
+    ("ix_assistant_threads_user_id", "assistant_threads(user_id)"),
+    ("ix_feed_cards_user_id", "feed_cards(user_id)"),
     ("ix_questions_concept_id", "questions(concept_id)"),
     ("ix_questions_exam_year", "questions(exam_year)"),
     ("ix_questions_origin", "questions(origin)"),

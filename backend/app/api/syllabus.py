@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from ..core.auth import admin_user
 from ..core.database import get_db
 from ..models.models import Subject, Topic, Question
 from ..data.curriculum import sort_subjects, sort_topics
@@ -53,7 +54,8 @@ class TopicInput(BaseModel):
 
 
 @router.post("/topics", status_code=201)
-def create_topic(payload: TopicInput, db: Session = Depends(get_db)):
+def create_topic(payload: TopicInput, db: Session = Depends(get_db),
+                 _admin=Depends(admin_user)):
     """Add a topic to a subject.
 
     Topics were seed-only, which made the syllabus a fixed list: importing a

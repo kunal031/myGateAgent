@@ -120,6 +120,12 @@ class FeedCard(Base):
     # nothing to point a foreign key at.
     tags = Column(String(400), default="", index=True)
 
+    #: Who wrote this card, for hand-written ones only. Generated cards
+    #: leave it null and are visible to everyone: they cost real quota to
+    #: produce and are identical for every student, so copying them per
+    #: account would multiply the corpus for no benefit.
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+
     card_type = Column(String(20), default="CONCEPT")  # TRAP, FORMULA, CONCEPT, SHORTCUT
     title = Column(String(200), nullable=False)
     content = Column(Text, nullable=False)
@@ -137,6 +143,9 @@ class Attempt(Base):
     __tablename__ = "attempts"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Nullable so rows written before accounts existed survive the
+    # migration; the backfill assigns them to the first account.
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     question_id = Column(Integer, ForeignKey("questions.id"), nullable=False)
     user_answer = Column(String(255), nullable=False)
     is_correct = Column(Boolean, nullable=False)
@@ -146,11 +155,13 @@ class Attempt(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     question = relationship("Question", back_populates="attempts")
+    user = relationship("User", back_populates="attempts")
 
 class MistakeRegistry(Base):
     __tablename__ = "mistake_registry"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     question_id = Column(Integer, ForeignKey("questions.id"), nullable=False)
     topic_id = Column(Integer, ForeignKey("topics.id"), nullable=False)
     subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)

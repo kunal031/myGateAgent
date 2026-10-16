@@ -7,10 +7,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from ..core.auth import current_user
 from ..core.database import get_db
 from ..models.concepts import Concept
 from ..models.models import FeedCard, Subject, Topic
 from ..models.tags import ConceptTag, TagType
+from ..models.users import User
 from ..models.rotation import CardView
 from ..services.feed.progress import record_card_recalled, record_card_seen
 from ..services.feed.ranking import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, get_feed_page
@@ -32,6 +34,7 @@ def get_feed(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ):
     """One page of the feed, ranked by base weight plus a per-mistake boost.
 
@@ -46,6 +49,7 @@ def get_feed(
         mode=mode,
         source_type=source_type,
         tag=tag,
+        user_id=user.id,
         offset=offset,
         limit=limit,
     )
@@ -56,43 +60,55 @@ def get_feed(
     }
 
 
-def _view_for(db: Session, card_id: int) -> CardView:
-    view = db.query(CardView).filter(CardView.card_id == card_id).first()
+def _view_for(db: Session, card_id: int, user_id: int) -> CardView:
+    """This student's history with a card.
+
+    Scoped by user: a card view holds the spaced-repetition schedule, so
+    an unscoped lookup would hand one student another's due dates and
+    recall counts.
+    """
+    view = (
+        db.query(CardView)
+        .filter(CardView.card_id == card_id, CardView.user_id == user_id)
+        .first()
+    )
     if view is None:
-        view = CardView(card_id=card_id)
+        view = CardView(card_id=card_id, user_id=user_id)
         db.add(view)
     return view
 
 
 @router.post("/cards/{card_id}/seen")
-def mark_seen(card_id: int, db: Session = Depends(get_db)):
+def mark_seen(card_id: int, db: Session = Depends(get_db),
+              user: User = Depends(current_user)):
     """Record that a card was shown, without claiming it was learned."""
     card = db.query(FeedCard).filter(FeedCard.id == card_id).first()
     if card is None:
         raise HTTPException(404, "No such card")
 
-    view = _view_for(db, card_id)
+    view = _view_for(db, card_id, user.id)
     view.seen_count = (view.seen_count or 0) + 1
     view.last_seen_at = datetime.utcnow()
-    record_card_seen(db, card)
+    record_card_seen(db, card, user_id=user.id)
     db.commit()
     return {"card_id": card_id, "seen_count": view.seen_count}
 
 
 @router.post("/cards/{card_id}/recall")
-def mark_recalled(card_id: int, db: Session = Depends(get_db)):
+def mark_recalled(card_id: int, db: Session = Depends(get_db),
+                  user: User = Depends(current_user)):
     """Marked "got it": schedule the next review further out."""
     card = db.query(FeedCard).filter(FeedCard.id == card_id).first()
     if card is None:
         raise HTTPException(404, "No such card")
 
-    view = _view_for(db, card_id)
+    view = _view_for(db, card_id, user.id)
     view.record_recall()
     # The recall has to land before the concept is re-evaluated, since
     # "learned" means every card in it has been recalled and this one has
     # only just become true.
     db.flush()
-    state = record_card_recalled(db, card)
+    state = record_card_recalled(db, card, user_id=user.id)
     db.commit()
     return {
         "card_id": card_id,
@@ -107,6 +123,7 @@ def mark_recalled(card_id: int, db: Session = Depends(get_db)):
 def due_for_revision(
     limit: int = Query(default=DEFAULT_PAGE_SIZE, le=MAX_PAGE_SIZE),
     db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ):
     """Cards whose review date has arrived, soonest-overdue first."""
     now = datetime.utcnow()
@@ -114,6 +131,7 @@ def due_for_revision(
         db.query(CardView, FeedCard)
         .join(FeedCard, CardView.card_id == FeedCard.id)
         .filter(CardView.due_at.isnot(None), CardView.due_at <= now)
+        .filter(CardView.user_id == user.id)
         .order_by(CardView.due_at.asc())
         .limit(limit).all()
     )
@@ -185,7 +203,8 @@ def _card_response(card: FeedCard) -> dict:
 
 
 @router.post("", status_code=201)
-def create_card(payload: UserCardPayload, db: Session = Depends(get_db)):
+def create_card(payload: UserCardPayload, db: Session = Depends(get_db),
+                user: User = Depends(current_user)):
     """Add a card by hand.
 
     Marked source_type="user" so it is distinguishable everywhere from
@@ -229,6 +248,7 @@ def create_card(payload: UserCardPayload, db: Session = Depends(get_db)):
         takeaway=(payload.takeaway.strip() or title)[:2000],
         difficulty=payload.difficulty,
         source_type="user",
+        user_id=user.id,
         tags=_clean_tags(payload.tags),
         provenance="",
         review_status="approved",
@@ -394,6 +414,7 @@ def browse_tags(
 def feed_progress(
     subject_slug: str | None = None,
     db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ):
     """Where the student is, for the header above the feed.
 
@@ -413,7 +434,7 @@ def feed_progress(
         concepts = concepts.filter(Concept.subject_id == subject.id)
     rows = concepts.all()
 
-    learned = learned_concept_ids(db)
+    learned = learned_concept_ids(db, user_id=user.id)
     graph = _prerequisite_map(db)
     ids = {c.id for c in rows}
 
@@ -425,7 +446,9 @@ def feed_progress(
 
     due = (
         db.query(CardView)
-        .filter(CardView.due_at.isnot(None), CardView.due_at <= datetime.utcnow())
+        .filter(CardView.due_at.isnot(None),
+                CardView.due_at <= datetime.utcnow(),
+                CardView.user_id == user.id)
         .count()
     )
 
@@ -441,6 +464,7 @@ def feed_progress(
 
     statuses = dict(
         db.query(ConceptProgress.status, func.count(ConceptProgress.id))
+        .filter(ConceptProgress.user_id == user.id)
         .group_by(ConceptProgress.status).all()
     )
 

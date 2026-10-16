@@ -50,6 +50,7 @@ class QuestionPaper(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     name = Column(String(250), nullable=False)
 
     # Where its questions are filed. Both required: a question cannot be

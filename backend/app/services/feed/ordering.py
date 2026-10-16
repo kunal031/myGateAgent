@@ -103,6 +103,8 @@ def _prerequisite_map(db: Session) -> dict[int, list[int]]:
 def score_cards(
     db: Session,
     rows: list[tuple[FeedCard, Subject, Topic, Concept | None, int]],
+    *,
+    user_id: int | None = None,
 ) -> list[ScoredCard]:
     """Score candidate cards by how worth showing they are right now.
 
@@ -110,13 +112,16 @@ def score_cards(
     recent-mistake count, so this does no further queries per card.
     """
     graph = _prerequisite_map(db)
-    learned = progress_service.learned_concept_ids(db)
-    states = progress_service.progress_by_concept(db)
+    learned = progress_service.learned_concept_ids(db, user_id=user_id)
+    states = progress_service.progress_by_concept(db, user_id=user_id)
 
     views = {
         v.card_id: v
+        # Scoped: another student's review schedule must not decide what
+        # this one sees as due.
         for v in db.query(CardView).filter(
-            CardView.card_id.in_([r[0].id for r in rows])
+            CardView.card_id.in_([r[0].id for r in rows]),
+            CardView.user_id == user_id,
         ).all()
     } if rows else {}
 

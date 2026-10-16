@@ -38,16 +38,22 @@ MISTAKES_PER_ESCALATION = 2
 MAX_ESCALATION = 3
 
 
-def get_or_create(db: Session, concept_id: int) -> ConceptProgress:
-    """The progress row for a concept, created on first contact."""
+def get_or_create(
+    db: Session, concept_id: int, *, user_id: int | None,
+) -> ConceptProgress:
+    """The progress row for one student's view of a concept."""
     row = (
         db.query(ConceptProgress)
-        .filter(ConceptProgress.concept_id == concept_id)
+        .filter(
+            ConceptProgress.concept_id == concept_id,
+            ConceptProgress.user_id == user_id,
+        )
         .first()
     )
     if row is None:
         row = ConceptProgress(
             concept_id=concept_id,
+            user_id=user_id,
             status=ConceptStatus.NOT_STARTED,
             first_seen_at=datetime.utcnow(),
         )
@@ -56,23 +62,31 @@ def get_or_create(db: Session, concept_id: int) -> ConceptProgress:
     return row
 
 
-def _recalled_card_ids(db: Session, concept_id: int) -> set[int]:
-    """Cards of this concept the student has successfully recalled."""
+def _recalled_card_ids(
+    db: Session, concept_id: int, *, user_id: int | None,
+) -> set[int]:
+    """Cards of this concept this student has successfully recalled."""
     rows = (
         db.query(CardView.card_id)
         .join(FeedCard, FeedCard.id == CardView.card_id)
-        .filter(FeedCard.concept_id == concept_id, CardView.recall_count > 0)
+        .filter(
+            FeedCard.concept_id == concept_id,
+            CardView.recall_count > 0,
+            CardView.user_id == user_id,
+        )
         .all()
     )
     return {r[0] for r in rows}
 
 
-def record_card_seen(db: Session, card: FeedCard) -> ConceptProgress | None:
+def record_card_seen(
+    db: Session, card: FeedCard, *, user_id: int | None,
+) -> ConceptProgress | None:
     """A card was shown. Move the concept off not_started."""
     if card.concept_id is None:
         return None
 
-    progress = get_or_create(db, card.concept_id)
+    progress = get_or_create(db, card.concept_id, user_id=user_id)
     progress.cards_seen = (progress.cards_seen or 0) + 1
     progress.last_seen_at = datetime.utcnow()
     if progress.status == ConceptStatus.NOT_STARTED:
@@ -80,7 +94,9 @@ def record_card_seen(db: Session, card: FeedCard) -> ConceptProgress | None:
     return progress
 
 
-def record_card_recalled(db: Session, card: FeedCard) -> ConceptProgress | None:
+def record_card_recalled(
+    db: Session, card: FeedCard, *, user_id: int | None,
+) -> ConceptProgress | None:
     """A card was marked known. Advance the concept if all of its cards are.
 
     "Learned" means every card in the concept has been recalled at least
@@ -90,7 +106,7 @@ def record_card_recalled(db: Session, card: FeedCard) -> ConceptProgress | None:
     if card.concept_id is None:
         return None
 
-    progress = get_or_create(db, card.concept_id)
+    progress = get_or_create(db, card.concept_id, user_id=user_id)
     progress.last_seen_at = datetime.utcnow()
 
     total = (
@@ -98,7 +114,7 @@ def record_card_recalled(db: Session, card: FeedCard) -> ConceptProgress | None:
         .filter(FeedCard.concept_id == card.concept_id)
         .count()
     )
-    recalled = len(_recalled_card_ids(db, card.concept_id))
+    recalled = len(_recalled_card_ids(db, card.concept_id, user_id=user_id))
 
     if total and recalled >= total:
         if progress.status in (ConceptStatus.NOT_STARTED, ConceptStatus.LEARNING):
@@ -110,7 +126,7 @@ def record_card_recalled(db: Session, card: FeedCard) -> ConceptProgress | None:
         elif progress.status == ConceptStatus.REVISED:
             # Mastered once every card has survived the full ladder, which
             # CardView.mastered already decides per card.
-            if _all_cards_mastered(db, card.concept_id):
+            if _all_cards_mastered(db, card.concept_id, user_id=user_id):
                 progress.status = ConceptStatus.MASTERED
             else:
                 progress.revision_count = (progress.revision_count or 0) + 1
@@ -121,11 +137,13 @@ def record_card_recalled(db: Session, card: FeedCard) -> ConceptProgress | None:
     return progress
 
 
-def _all_cards_mastered(db: Session, concept_id: int) -> bool:
+def _all_cards_mastered(
+    db: Session, concept_id: int, *, user_id: int | None,
+) -> bool:
     rows = (
         db.query(CardView.mastered)
         .join(FeedCard, FeedCard.id == CardView.card_id)
-        .filter(FeedCard.concept_id == concept_id)
+        .filter(FeedCard.concept_id == concept_id, CardView.user_id == user_id)
         .all()
     )
     return bool(rows) and all(r[0] for r in rows)
@@ -133,12 +151,13 @@ def _all_cards_mastered(db: Session, concept_id: int) -> bool:
 
 def record_answer(
     db: Session, concept_id: int | None, *, correct: bool,
+    user_id: int | None,
 ) -> ConceptProgress | None:
     """A quiz or drill answer. Feeds the escalation ladder."""
     if concept_id is None:
         return None
 
-    progress = get_or_create(db, concept_id)
+    progress = get_or_create(db, concept_id, user_id=user_id)
     if correct:
         progress.correct_count = (progress.correct_count or 0) + 1
     else:
@@ -154,10 +173,11 @@ def record_answer(
     return progress
 
 
-def learned_concept_ids(db: Session) -> set[int]:
-    """Concepts the student is past, for the readiness check."""
+def learned_concept_ids(db: Session, *, user_id: int | None) -> set[int]:
+    """Concepts this student is past, for the readiness check."""
     rows = (
         db.query(ConceptProgress.concept_id)
+        .filter(ConceptProgress.user_id == user_id)
         .filter(ConceptProgress.status.in_((
             ConceptStatus.LEARNED, ConceptStatus.REVISED,
             ConceptStatus.MASTERED,
@@ -167,15 +187,18 @@ def learned_concept_ids(db: Session) -> set[int]:
     return {r[0] for r in rows}
 
 
-def progress_by_concept(db: Session) -> dict[int, ConceptProgress]:
-    """Every progress row, keyed by concept, for one-query ordering."""
+def progress_by_concept(
+    db: Session, *, user_id: int | None,
+) -> dict[int, ConceptProgress]:
+    """This student's progress rows, keyed by concept, for one-query ordering."""
     return {
         row.concept_id: row
-        for row in db.query(ConceptProgress).all()
+        for row in db.query(ConceptProgress)
+        .filter(ConceptProgress.user_id == user_id).all()
     }
 
 
-def backfill_from_card_views(db: Session) -> int:
+def backfill_from_card_views(db: Session, *, user_id: int | None) -> int:
     """Build progress rows from recall history already on disk.
 
     Card views predate this module, so without a backfill a student who has
@@ -185,13 +208,13 @@ def backfill_from_card_views(db: Session) -> int:
     rows = (
         db.query(FeedCard)
         .join(CardView, CardView.card_id == FeedCard.id)
-        .filter(FeedCard.concept_id.isnot(None))
+        .filter(FeedCard.concept_id.isnot(None), CardView.user_id == user_id)
         .all()
     )
     for card in rows:
         if card.concept_id in seen:
             continue
         seen.add(card.concept_id)
-        record_card_recalled(db, card)
+        record_card_recalled(db, card, user_id=user_id)
     db.commit()
     return len(seen)

@@ -4,8 +4,11 @@ from pydantic import BaseModel
 from typing import Optional, List
 import json
 from datetime import datetime
+from ..core.auth import current_user
 from ..core.database import get_db
 from ..models.models import Question, Subject, Topic, Attempt, MistakeRegistry
+
+from ..models.users import User
 
 router = APIRouter(prefix="/api/quiz", tags=["Quiz"])
 
@@ -65,7 +68,8 @@ def get_quiz_questions(
     return result
 
 @router.post("/submit")
-def submit_answer(payload: AnswerSubmission, db: Session = Depends(get_db)):
+def submit_answer(payload: AnswerSubmission, db: Session = Depends(get_db),
+                  user: User = Depends(current_user)):
     q = db.query(Question).filter(Question.id == payload.question_id).first()
     if not q:
         raise HTTPException(status_code=404, detail="Question not found")
@@ -111,6 +115,7 @@ def submit_answer(payload: AnswerSubmission, db: Session = Depends(get_db)):
     # Record attempt
     attempt = Attempt(
         question_id=q.id,
+        user_id=user.id,
         user_answer=user_ans,
         is_correct=is_correct,
         marks_obtained=marks_awarded,
@@ -122,7 +127,10 @@ def submit_answer(payload: AnswerSubmission, db: Session = Depends(get_db)):
     
     # Update MistakeRegistry
     if not is_correct:
-        mistake = db.query(MistakeRegistry).filter(MistakeRegistry.question_id == q.id).first()
+        mistake = db.query(MistakeRegistry).filter(
+            MistakeRegistry.question_id == q.id,
+            MistakeRegistry.user_id == user.id,
+        ).first()
         if mistake:
             mistake.error_count += 1
             mistake.last_user_answer = user_ans
@@ -131,6 +139,7 @@ def submit_answer(payload: AnswerSubmission, db: Session = Depends(get_db)):
         else:
             mistake = MistakeRegistry(
                 question_id=q.id,
+                user_id=user.id,
                 topic_id=q.topic_id,
                 subject_id=q.subject_id,
                 error_count=1,
@@ -141,7 +150,10 @@ def submit_answer(payload: AnswerSubmission, db: Session = Depends(get_db)):
             db.add(mistake)
     else:
         # If user gets it right now, improve mastery level
-        mistake = db.query(MistakeRegistry).filter(MistakeRegistry.question_id == q.id).first()
+        mistake = db.query(MistakeRegistry).filter(
+            MistakeRegistry.question_id == q.id,
+            MistakeRegistry.user_id == user.id,
+        ).first()
         if mistake:
             mistake.mastery_level = min(5, mistake.mastery_level + 1)
             
@@ -158,7 +170,8 @@ def submit_answer(payload: AnswerSubmission, db: Session = Depends(get_db)):
 
 
 @router.get("/{question_id}/solution")
-def get_solution(question_id: int, db: Session = Depends(get_db)):
+def get_solution(question_id: int, db: Session = Depends(get_db),
+                 user: User = Depends(current_user)):
     """The worked solution for a question, once it has been attempted.
 
     Solutions are review material: seeing one before answering turns a drill
@@ -171,7 +184,8 @@ def get_solution(question_id: int, db: Session = Depends(get_db)):
 
     attempts = (
         db.query(Attempt)
-        .filter(Attempt.question_id == question_id)
+        .filter(Attempt.question_id == question_id,
+                Attempt.user_id == user.id)
         .order_by(Attempt.created_at.desc())
         .all()
     )
@@ -209,6 +223,7 @@ def review_mistakes(
     limit: int = Query(default=20, le=100),
     subject_slug: Optional[str] = None,
     db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ):
     """Questions answered wrong, newest first, for post-quiz analysis.
 
@@ -217,6 +232,7 @@ def review_mistakes(
     """
     query = (
         db.query(MistakeRegistry, Question, Subject, Topic)
+        .filter(MistakeRegistry.user_id == user.id)
         .join(Question, MistakeRegistry.question_id == Question.id)
         .join(Subject, Question.subject_id == Subject.id)
         .join(Topic, Question.topic_id == Topic.id)
