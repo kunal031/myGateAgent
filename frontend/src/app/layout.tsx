@@ -4,6 +4,8 @@ import "../styles/themes.css";
 import "./globals.css";
 
 import AppShell from "@/features/shell/AppShell";
+import AuthGate from "@/features/auth/AuthGate";
+import AuthProvider from "@/features/auth/AuthProvider";
 import { THEME_INIT_SCRIPT, ThemeProvider } from "@/features/theme/ThemeProvider";
 
 export const metadata: Metadata = {
@@ -31,7 +33,14 @@ export default function RootLayout({
       </head>
       <body className="antialiased">
         <ThemeProvider>
-          <AppShell>{children}</AppShell>
+          {/* Gating at the root means a new route is protected by default;
+              guarding page by page fails quietly, and the failure is an
+              unprotected screen. */}
+          <AuthProvider>
+            <AuthGate>
+              <AppShell>{children}</AppShell>
+            </AuthGate>
+          </AuthProvider>
         </ThemeProvider>
       </body>
     </html>
