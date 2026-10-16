@@ -22,11 +22,24 @@ class Topic(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
+
+    # Nullable: a topic with no chapter is shown under "Unassigned" rather
+    # than dropping out of the breakdown, so a mapping gap stays visible.
+    chapter_id = Column(Integer, ForeignKey("syllabus_chapters.id"),
+                        nullable=True, index=True)
+
     name = Column(String(150), nullable=False)
     slug = Column(String(150), index=True, nullable=False)
     importance = Column(String(20), default="High")  # High, Medium, Core
 
+    # Study order within the chapter. Previously the only ordering lived in
+    # data/curriculum.py, so every consumer had to sort by hand or get it
+    # wrong -- feed, quiz and analytics each ordered differently.
+    sequence = Column(Integer, default=0, index=True)
+
     subject = relationship("Subject", back_populates="topics")
+    chapter = relationship("Chapter", foreign_keys=[chapter_id],
+                           overlaps="topics")
     questions = relationship("Question", back_populates="topic")
     feed_cards = relationship("FeedCard", back_populates="topic")
 
