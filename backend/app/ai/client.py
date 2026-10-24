@@ -17,6 +17,7 @@ from tenacity import (
 )
 
 from ..core.config import settings
+from . import fallback
 from . import models
 from .rate_limit import (
     DailyQuotaExceeded, generation_limiter, ingest_limiter,
@@ -130,6 +131,24 @@ try:  # pragma: no cover - import shape depends on the installed httpx
 except ImportError:
     _TRANSIENT = (TimeoutError, ConnectionError)
 
+def is_quota_error(exc: BaseException) -> bool:
+    """Whether this is Gemini saying the budget is spent.
+
+    Matched on the status code where the SDK exposes one and on the
+    message otherwise, because a free key returns 429 RESOURCE_EXHAUSTED
+    through more than one exception type depending on where it surfaces.
+
+    Deliberately not in the retry list: retrying a quota error spends the
+    next window's budget to fail the same way. The answer is a different
+    provider, not another attempt.
+    """
+    code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+    if code == 429:
+        return True
+    text = str(exc).upper()
+    return "RESOURCE_EXHAUSTED" in text or "429" in text
+
+
 _retry = retry(
     retry=retry_if_exception_type(_TRANSIENT),
     wait=wait_exponential(multiplier=2, min=4, max=60),
@@ -163,11 +182,29 @@ def generate_text(
         response_mime_type=response_mime_type,
         response_schema=response_schema,
     )
-    response = _with_deadline(
-        get_client().models.generate_content,
-        model=model, contents=prompt, config=config,
-    )
-    return (response.text or "").strip()
+    try:
+        response = _with_deadline(
+            get_client().models.generate_content,
+            model=model, contents=prompt, config=config,
+        )
+        return (response.text or "").strip()
+    except Exception as exc:
+        # Only a quota error falls through. A malformed prompt or a
+        # bad schema would fail on the second provider too, and sending
+        # it there spends that budget to produce the same failure.
+        if not is_quota_error(exc) or not fallback.configured():
+            raise
+        logger.warning(
+            "Gemini quota exhausted; falling back to %s",
+            settings.FALLBACK_MODEL,
+        )
+        return fallback.generate_text(
+            prompt,
+            system_instruction=system_instruction,
+            response_mime_type=response_mime_type,
+            response_schema=response_schema,
+            temperature=temperature,
+        )
 
 
 @_retry

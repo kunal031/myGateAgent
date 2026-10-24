@@ -40,6 +40,20 @@ Parameters:
     Type: String
     NoEcho: true
 
+  FallbackApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: >
+      Optional second provider, used only when Gemini returns 429. Any
+      OpenAI-compatible endpoint; blank disables the fallback.
+  FallbackBaseUrl:
+    Type: String
+    Default: https://api.groq.com/openai/v1
+  FallbackModel:
+    Type: String
+    Default: openai/gpt-oss-120b
+
   GoogleClientId:
     Type: String
     Default: ""
@@ -67,6 +81,9 @@ Globals:
         NEON_DATABASE_URL: !Ref NeonDatabaseUrl
         JWT_SECRET: !Ref JwtSecret
         GEMINI_API_KEY: !Ref GeminiApiKey
+        FALLBACK_API_KEY: !Ref FallbackApiKey
+        FALLBACK_BASE_URL: !Ref FallbackBaseUrl
+        FALLBACK_MODEL: !Ref FallbackModel
         GOOGLE_CLIENT_ID: !Ref GoogleClientId
         GOOGLE_CLIENT_SECRET: !Ref GoogleClientSecret
         CORS_ORIGINS: !Ref FrontendOrigin

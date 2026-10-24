@@ -72,6 +72,21 @@ class Settings(BaseSettings):
     #: where the API and worker have separate /tmp.
     UPLOAD_BUCKET: str = ""
 
+    # ---- Fallback model ----
+    #: A second provider used only when Gemini returns 429
+    #: RESOURCE_EXHAUSTED. Any OpenAI-compatible endpoint works -- Groq,
+    #: Mistral, Together, OpenRouter -- so changing provider is a base
+    #: URL and a model name here, not a code change.
+    #:
+    #: Empty disables the fallback entirely: a quota error then surfaces
+    #: as it did before, rather than silently doing nothing.
+    FALLBACK_API_KEY: str = ""
+    FALLBACK_BASE_URL: str = "https://api.groq.com/openai/v1"
+    #: Groq's gpt-oss and qwen3.8 models support strict JSON schema, which
+    #: the generation pipeline needs; a model without it degrades to
+    #: json_object and best-effort shape adherence.
+    FALLBACK_MODEL: str = "openai/gpt-oss-120b"
+
     # ---- Google sign-in ----
     #: From the Google Cloud console, OAuth 2.0 Client ID of type "Web
     #: application". The ID is public -- it ships in the frontend bundle
