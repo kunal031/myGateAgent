@@ -48,8 +48,12 @@ function accuracyColour(accuracy: number | null): string {
  *
  * Coverage sits beside accuracy because either alone misleads: 100% of
  * three questions is not mastery, and 20 attempts at 40% is not progress.
- * A concept shows cards instead of questions, since no question carries a
- * concept id -- the unit differs, the meaning does not.
+ *
+ * The unit is labelled on every row -- "Q" for questions, "cards" for a
+ * concept -- because the concept level cannot count questions at all: no
+ * question carries a concept id. Without the label a topic reading 7/51
+ * sits directly above concepts reading 0/6 and looks like broken
+ * arithmetic, when the two are simply counting different things.
  */
 function Metrics({ node }: { node: BreakdownNode }) {
   const isConcept = node.level === "concept";
@@ -76,6 +80,7 @@ function Metrics({ node }: { node: BreakdownNode }) {
               ? `${done} of ${total} cards read`
               : `${done} of ${total} questions seen`}>
         {done}/{total}
+        <span style={{ opacity: 0.7 }}>{isConcept ? " cards" : "Q"}</span>
         {node.repeats > 0 && (
           <span title={`${node.repeats} repeat attempt(s)`}> +{node.repeats}</span>
         )}
@@ -229,7 +234,7 @@ export default function SubjectDrilldown() {
           Subject breakdown
         </h3>
         <p className="text-[10px]" style={{ color: "var(--ink-faint)" }}>
-          seen/total · coverage · accuracy
+          questions seen · accuracy · concepts in cards
         </p>
       </header>
 
