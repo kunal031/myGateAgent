@@ -53,20 +53,97 @@ def _supports_schema(model: str) -> bool:
     return any(hint in lowered for hint in _SCHEMA_CAPABLE_HINTS)
 
 
+def _strictify(node: Any) -> Any:
+    """Make a JSON Schema acceptable to strict constrained decoding.
+
+    Groq rejects a strict schema unless **every** object sets
+    `additionalProperties: false`, and Pydantic does not emit it:
+
+        400 invalid JSON schema for response_format:
+            `additionalProperties:false` must be set on every object
+
+    Strict mode also requires every property to be listed as required,
+    since constrained decoding cannot choose to omit a field.
+
+    Recursive because a schema nests -- $defs, arrays of objects, nested
+    models -- and setting it only at the top passes a local check and
+    fails at the provider.
+    """
+    if isinstance(node, list):
+        return [_strictify(item) for item in node]
+    if not isinstance(node, dict):
+        return node
+
+    out = {key: _strictify(value) for key, value in node.items()}
+    if out.get("type") == "object" or "properties" in out:
+        out.setdefault("additionalProperties", False)
+        if "properties" in out:
+            out["required"] = list(out["properties"])
+    return out
+
+
 def _schema_of(response_schema: Any) -> dict | None:
     """Turn whatever the caller passed into a JSON Schema dict.
 
-    Callers pass a Pydantic model, a plain dict, or nothing. Gemini
-    accepts all three; an OpenAI-compatible endpoint wants a dict.
+    Callers pass a Pydantic model describing the output, a plain dict, a
+    google-genai `types.Schema`, or nothing.
+
+    The genai case is the trap. `types.Schema` is itself a Pydantic
+    model, so calling model_json_schema() on it returns the **meta**
+    schema -- a description of what a schema looks like, not of the card
+    being generated. Sending that asked Groq to generate a schema, and it
+    rejected the request outright:
+
+        400 unsupported schema node of type []interface {}
+            at #/$defs/Schema/properties/required
+
+    which would have made card generation fail on the fallback rather
+    than merely degrade. Converted properly where genai offers it, and
+    otherwise returned as None so the caller drops to json_object --
+    valid JSON with the shape asked for in words, which is weaker but
+    works.
     """
     if response_schema is None:
         return None
     if isinstance(response_schema, dict):
         return response_schema
+
+    # google-genai types.Schema: convert the instance's own contents, not
+    # the class's metaschema.
+    if type(response_schema).__name__ == "Schema":
+        dump = getattr(response_schema, "model_dump", None)
+        if callable(dump):
+            raw = dump(exclude_none=True, mode="json")
+            return _genai_to_json_schema(raw)
+        return None
+
     schema_fn = getattr(response_schema, "model_json_schema", None)
     if callable(schema_fn):
         return schema_fn()
     return None
+
+
+def _genai_to_json_schema(node: Any) -> Any:
+    """Translate a dumped genai Schema into ordinary JSON Schema.
+
+    genai spells types in upper case ("OBJECT", "ARRAY") and uses
+    `nullable`; JSON Schema wants lower case. Small, but the difference
+    between a schema a provider accepts and a 400.
+    """
+    if isinstance(node, list):
+        return [_genai_to_json_schema(item) for item in node]
+    if not isinstance(node, dict):
+        return node
+
+    out: dict[str, Any] = {}
+    for key, value in node.items():
+        if key == "type" and isinstance(value, str):
+            out["type"] = value.lower()
+        elif key == "nullable":
+            continue          # expressed differently in JSON Schema
+        else:
+            out[key] = _genai_to_json_schema(value)
+    return out
 
 
 def generate_text(
@@ -105,7 +182,7 @@ def generate_text(
             payload["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {"name": "response", "strict": True,
-                                "schema": schema},
+                                "schema": _strictify(schema)},
             }
         else:
             payload["response_format"] = {"type": "json_object"}
