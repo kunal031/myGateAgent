@@ -64,14 +64,14 @@ export default function AnalyticsPage() {
         {/* Total Questions Attempted */}
         <div className="p-4 rounded-xl bg-[var(--surface)] border border-[var(--line)]">
           <div className="flex items-center justify-between text-[var(--ink-faint)] text-xs font-semibold">
-            <span>Drilled</span>
+            <span>Attempted</span>
             <BookOpen className="w-3.5 h-3.5 text-[var(--ink)]" />
           </div>
           <div className="text-2xl font-black text-[var(--ink)] font-mono mt-1">
             {stats?.total_attempts || 0}
           </div>
           <div className="text-[10px] text-[var(--ink-faint)] font-mono mt-0.5">
-            {stats?.correct_attempts || 0} solved
+            {stats?.correct_attempts || 0} correct
           </div>
         </div>
 
@@ -92,7 +92,7 @@ export default function AnalyticsPage() {
         {/* Total Score Accrued */}
         <div className="p-4 rounded-xl bg-[var(--surface)] border border-[var(--line)]">
           <div className="flex items-center justify-between text-[var(--ink-faint)] text-xs font-semibold">
-            <span>Net Marks</span>
+            <span>Marks</span>
             <CheckCircle className="w-3.5 h-3.5 text-violet-400" />
           </div>
           <div className="text-2xl font-black text-violet-300 font-mono mt-1">
