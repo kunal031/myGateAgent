@@ -64,6 +64,19 @@ class AssistantMessage(Base):
     # Citations for an assistant turn, so an answer stays auditable.
     citations = Column(Text, default="")
 
+    #: pending | ready | failed. A pending assistant message is a
+    #: placeholder written before generation starts, so the client has
+    #: something to poll and the conversation renders in order rather
+    #: than having the answer appear above the question.
+    #:
+    #: Only meaningful on role="assistant"; a user message is always
+    #: ready by definition.
+    status = Column(String(16), default="ready", nullable=False, index=True)
+
+    #: Why generation failed, shown in place of an answer. Null unless
+    #: status is "failed".
+    error = Column(Text, default="")
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     thread = relationship("AssistantThread", back_populates="messages")
