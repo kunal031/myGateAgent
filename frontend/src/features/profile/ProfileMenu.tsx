@@ -3,11 +3,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ChevronRight, LogOut, Settings, User } from "lucide-react";
 
+import { useRouter } from "next/navigation";
+
 import { useAuth } from "../auth/AuthProvider";
 
-import ProfilePanel from "./ProfilePanel";
-
-type View = "closed" | "menu" | "info" | "manage";
+type View = "closed" | "menu";
 
 /**
  * The avatar button, and the menu behind it.
@@ -23,6 +23,7 @@ export default function ProfileMenu({ placement = "below" }: {
   placement?: "below" | "above";
 } = {}) {
   const { user, signOut } = useAuth();
+  const router = useRouter();
   const [view, setView] = useState<View>("closed");
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -120,7 +121,7 @@ export default function ProfileMenu({ placement = "below" }: {
 
           <button
             type="button" role="menuitem" style={item}
-            onClick={() => setView("info")}
+            onClick={() => { setView("closed"); router.push("/profile"); }}
             className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] font-semibold hover:opacity-70"
           >
             <User className="h-4 w-4" />
@@ -131,7 +132,7 @@ export default function ProfileMenu({ placement = "below" }: {
 
           <button
             type="button" role="menuitem" style={item}
-            onClick={() => setView("manage")}
+            onClick={() => { setView("closed"); router.push("/profile?tab=manage"); }}
             className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] font-semibold hover:opacity-70"
           >
             <Settings className="h-4 w-4" />
@@ -152,13 +153,6 @@ export default function ProfileMenu({ placement = "below" }: {
             </button>
           </div>
         </div>
-      )}
-
-      {(view === "info" || view === "manage") && (
-        <ProfilePanel
-          tab={view === "info" ? "info" : "manage"}
-          onClose={() => setView("closed")}
-        />
       )}
     </div>
   );

@@ -1,18 +1,14 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import {
-  BookOpen, Brain, CheckCircle2, Clock, Flame, KeyRound, Loader2,
-  Target, X,
+  Brain, CheckCircle2, Flame, KeyRound, Loader2, Target,
 } from "lucide-react";
 
 import {
-  ProfileInfo, ProfileStats, changePassword, fetchProfile,
-  fetchProfileStats, updateProfile,
+  ProfileInfo, ProfileStats, changePassword, updateProfile,
 } from "@/lib/api";
 import { storeSession } from "@/lib/auth";
-
-type Tab = "info" | "manage";
 
 function Stat({ icon: Icon, label, value, hint }: {
   icon: typeof Target; label: string; value: string | number; hint?: string;
@@ -52,76 +48,7 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-/** The profile overlay: your details and numbers, or the form to change them. */
-export default function ProfilePanel({ tab, onClose }: {
-  tab: Tab; onClose: () => void;
-}) {
-  const [active, setActive] = useState<Tab>(tab);
-  const [profile, setProfile] = useState<ProfileInfo | null>(null);
-  const [stats, setStats] = useState<ProfileStats | null>(null);
-
-  useEffect(() => {
-    fetchProfile().then(setProfile).catch(() => {});
-    fetchProfileStats().then(setStats).catch(() => {});
-  }, []);
-
-  // Escape closes, and background scroll is locked while the sheet covers
-  // the screen -- on mobile the page otherwise scrolls under the overlay.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("keydown", onKey);
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = previous;
-    };
-  }, [onClose]);
-
-  return (
-    <div className="fixed inset-0 z-[60] flex items-end justify-center sm:items-center"
-         style={{ background: "color-mix(in oklab, var(--canvas) 70%, transparent)" }}
-         onClick={onClose}>
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="max-h-[92dvh] w-full overflow-y-auto rounded-t-[var(--radius-lg)] p-4 sm:max-w-lg sm:rounded-[var(--radius-lg)]"
-        style={{ background: "var(--surface)",
-                 border: "var(--line-width) solid var(--line)",
-                 boxShadow: "var(--shadow)" }}
-      >
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <div className="flex gap-1 rounded-[var(--radius-pill)] p-0.5"
-               style={{ background: "var(--surface-sunk)",
-                        border: "var(--line-width) solid var(--line)" }}>
-            {(["info", "manage"] as Tab[]).map((t) => (
-              <button
-                key={t} type="button" onClick={() => setActive(t)}
-                className="rounded-[var(--radius-pill)] px-3 py-1.5 text-[11px] font-extrabold uppercase tracking-wider"
-                style={active === t
-                  ? { background: "var(--accent)", color: "var(--ink)" }
-                  : { background: "transparent", color: "var(--ink-faint)" }}
-              >
-                {t === "info" ? "Info" : "Manage"}
-              </button>
-            ))}
-          </div>
-          <button type="button" onClick={onClose} aria-label="Close"
-                  className="flex h-9 w-9 items-center justify-center rounded-[var(--radius)]"
-                  style={{ border: "var(--line-width) solid var(--line)",
-                           color: "var(--ink)" }}>
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        {active === "info"
-          ? <InfoTab profile={profile} stats={stats} />
-          : <ManageTab profile={profile} onSaved={setProfile} />}
-      </div>
-    </div>
-  );
-}
-
-function InfoTab({ profile, stats }: {
+export function InfoTab({ profile, stats }: {
   profile: ProfileInfo | null; stats: ProfileStats | null;
 }) {
   if (!profile) {
@@ -224,12 +151,12 @@ function InfoTab({ profile, stats }: {
   );
 }
 
-function ManageTab({ profile, onSaved }: {
+export function ManageTab({ profile, onSaved }: {
   profile: ProfileInfo | null;
   onSaved: (p: ProfileInfo) => void;
 }) {
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
+  const [name, setName] = useState(profile?.display_name ?? "");
+  const [phone, setPhone] = useState(profile?.phone ?? "");
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -240,12 +167,6 @@ function ManageTab({ profile, onSaved }: {
   const [pwBusy, setPwBusy] = useState(false);
   const [pwMessage, setPwMessage] = useState("");
   const [pwError, setPwError] = useState("");
-
-  useEffect(() => {
-    if (!profile) return;
-    setName(profile.display_name || "");
-    setPhone(profile.phone || "");
-  }, [profile]);
 
   const field = {
     background: "var(--surface-sunk)",
