@@ -300,10 +300,15 @@ def main() -> None:
                         help="target DSN; defaults to POSTGRES_URL")
     parser.add_argument("--to-aiven", action="store_true",
                         help="target POSTGRESQL_AIVEN_URI instead")
+    parser.add_argument("--to-neon", action="store_true",
+                        help="target NEON_DATABASE_URL from .env. Preferred "
+                             "over --to-url, which puts the password in the "
+                             "process list where any local user can read it.")
     parser.add_argument("--to-url", default=None,
-                        help="target any Postgres DSN -- Neon, Oracle, or "
-                             "anywhere else. Avoids a new flag per vendor. "
-                             "For Neon use the -pooler hostname.")
+                        help="target any Postgres DSN. Note the DSN appears "
+                             "in `ps` output for the life of the run, so "
+                             "prefer --to-neon or an env var for anything "
+                             "with a live password in it.")
     parser.add_argument("--from-local", action="store_true",
                         help="read local Postgres instead of SQLite; required "
                              "to resync a cloud copy, since the SQLite file "
@@ -322,10 +327,16 @@ def main() -> None:
     aiven = settings._normalise_dsn(settings.POSTGRESQL_AIVEN_URI)
     local = settings._normalise_dsn(settings.POSTGRES_URL)
 
-    if args.from_aiven and (args.to_aiven or args.to_url):
-        raise SystemExit("Pick one direction: --to-aiven/--to-url or --from-aiven")
+    if args.from_aiven and (args.to_aiven or args.to_url or args.to_neon):
+        raise SystemExit(
+            "Pick one direction: --to-aiven/--to-neon/--to-url or --from-aiven"
+        )
 
-    if args.to_url:
+    if args.to_neon:
+        target_url = settings._normalise_dsn(settings.NEON_DATABASE_URL)
+        if not target_url:
+            raise SystemExit("NEON_DATABASE_URL is not set in backend/.env")
+    elif args.to_url:
         target_url = settings._normalise_dsn(args.to_url)
     elif args.to_aiven:
         target_url = aiven
