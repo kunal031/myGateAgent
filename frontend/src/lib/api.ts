@@ -672,3 +672,74 @@ export async function changePassword(
   }
   return res.json();
 }
+
+// ------------------------------------------------- hierarchy drill-down
+
+/** The shape every level of the breakdown shares. */
+export interface BreakdownRow {
+  attempted: number;
+  correct: number;
+  accuracy: number | null;
+  available: number;
+  /** Distinct questions seen. Differs from `attempted` on any retry. */
+  covered: number;
+  repeats: number;
+  unattempted: number;
+}
+
+export interface SubjectRow extends BreakdownRow {
+  subject_id: number;
+  subject_name: string;
+  subject_slug: string;
+  weightage_marks: number;
+}
+
+export interface ChapterRow extends BreakdownRow {
+  chapter_id: number | null;
+  chapter_name: string;
+  chapter_slug: string;
+  sequence: number;
+}
+
+export interface TopicRow extends BreakdownRow {
+  topic_id: number;
+  topic_name: string;
+  topic_slug: string;
+  sequence: number;
+  concepts: number;
+}
+
+export interface ConceptRow {
+  concept_id: number;
+  concept_name: string;
+  concept_slug: string;
+  sequence: number;
+  status: string;
+  cards_seen: number;
+  exam_weight: number;
+  needs_work: boolean;
+}
+
+export async function fetchSubjectBreakdown(): Promise<SubjectRow[]> {
+  const res = await fetch(`${API_BASE}/api/stats/breakdown`);
+  if (!res.ok) throw new Error("Could not load the subject breakdown");
+  return res.json();
+}
+
+export async function fetchChapterBreakdown(subjectId: number): Promise<ChapterRow[]> {
+  const res = await fetch(`${API_BASE}/api/stats/breakdown/subject/${subjectId}`);
+  if (!res.ok) throw new Error("Could not load chapters");
+  return res.json();
+}
+
+export async function fetchTopicBreakdown(chapterId: number): Promise<TopicRow[]> {
+  const res = await fetch(`${API_BASE}/api/stats/breakdown/chapter/${chapterId}`);
+  if (!res.ok) throw new Error("Could not load topics");
+  return res.json();
+}
+
+export async function fetchConceptBreakdown(topicId: number): Promise<ConceptRow[]> {
+  const res = await fetch(`${API_BASE}/api/stats/breakdown/topic/${topicId}`);
+  if (!res.ok) throw new Error("Could not load concepts");
+  return res.json();
+}
