@@ -1,0 +1,215 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  GateMaster API on Lambda. Two functions behind one stack: a short-lived
+  API behind HTTP API Gateway, and a long-running worker for the work that
+  cannot fit inside a request.
+
+  The split is not an optimisation. API Gateway hard-caps a response at 29
+  seconds, and a grounded Gemini answer or a paper import routinely takes
+  minutes -- measured at over five on a rate-limited key. Running them in
+  the API function would return 504 while the work completed unseen.
+
+Parameters:
+  Stage:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, prod]
+
+  NeonDatabaseUrl:
+    Type: String
+    NoEcho: true
+    Description: >
+      Neon POOLED connection string -- the hostname must contain "-pooler".
+      Lambda opens a connection per invocation, and routing through Neon's
+      PgBouncer is what stops concurrent invocations exhausting the
+      compute's max_connections. The direct hostname works in testing and
+      fails under load.
+
+  JwtSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    Description: >
+      Signs access and refresh tokens. No default on purpose: a shared
+      fallback would let anyone holding the source mint a token for any
+      account on any deployment.
+
+  GeminiApiKey:
+    Type: String
+    NoEcho: true
+
+  GoogleClientId:
+    Type: String
+    Default: ""
+  GoogleClientSecret:
+    Type: String
+    NoEcho: true
+    Default: ""
+
+  FrontendOrigin:
+    Type: String
+    Default: http://localhost:3000
+    Description: Vercel URL. Browsers reject a wildcard with credentials.
+
+Conditions:
+  HasGoogle: !Not [!Equals [!Ref GoogleClientId, ""]]
+
+Globals:
+  Function:
+    Runtime: python3.11
+    Architectures: [arm64]      # cheaper per ms than x86_64, same code
+    MemorySize: 1024
+    Environment:
+      Variables:
+        DB_TARGET: neon
+        NEON_DATABASE_URL: !Ref NeonDatabaseUrl
+        JWT_SECRET: !Ref JwtSecret
+        GEMINI_API_KEY: !Ref GeminiApiKey
+        GOOGLE_CLIENT_ID: !Ref GoogleClientId
+        GOOGLE_CLIENT_SECRET: !Ref GoogleClientSecret
+        CORS_ORIGINS: !Ref FrontendOrigin
+        OAUTH_SUCCESS_REDIRECT: !Sub "${FrontendOrigin}/auth/callback"
+        UPLOAD_BUCKET: !Ref UploadBucket
+        # Everything below the app directory is read-only on Lambda; only
+        # /tmp is writable, and only for this instance's lifetime.
+        DATA_DIR: /tmp/data
+        PYTHONDONTWRITEBYTECODE: "1"
+
+Resources:
+  # ---------------------------------------------------------------- API
+
+  Api:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref Stage
+      CorsConfiguration:
+        AllowOrigins: [!Ref FrontendOrigin]
+        AllowHeaders: [authorization, content-type]
+        AllowMethods: [GET, POST, PATCH, DELETE, OPTIONS]
+        # Required for the Authorization header to be sent cross-origin,
+        # and the reason AllowOrigins cannot be "*".
+        AllowCredentials: true
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "gatemaster-api-${Stage}"
+      CodeUri: backend/
+      Handler: app.lambda_api.handler
+    Metadata:
+      BuildMethod: python3.11
+      BuildProperties:
+        # The API's own manifest: no pymupdf, lxml or Pillow, none of
+        # which any route imports. 137 MB against 230 for one shared set.
+        Manifest: requirements-lambda.txt
+      # Below API Gateway's own 29s cap, so a slow request fails as a
+      # Lambda timeout with a logged stack rather than an opaque 504.
+      Timeout: 28
+      Environment:
+        Variables:
+          WORKER_FUNCTION_NAME: !Ref WorkerFunction
+          GOOGLE_REDIRECT_URI: !Sub
+            - "https://${ApiId}.execute-api.${AWS::Region}.amazonaws.com/api/auth/google/callback"
+            - ApiId: !Ref Api
+      Policies:
+        # Dispatch only: the API may start a job and never run one.
+        - LambdaInvokePolicy:
+            FunctionName: !Ref WorkerFunction
+        - S3CrudPolicy:
+            BucketName: !Ref UploadBucket
+      Events:
+        Proxy:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Api
+            Path: /{proxy+}
+            Method: ANY
+        Root:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Api
+            Path: /
+            Method: ANY
+
+  # ------------------------------------------------------------- worker
+
+  WorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "gatemaster-worker-${Stage}"
+      CodeUri: backend/
+      Handler: app.lambda_worker.handler
+    Metadata:
+      BuildMethod: python3.11
+      BuildProperties:
+        Manifest: requirements-lambda-worker.txt
+      # The reason this function exists. Gemini generation with retries
+      # was measured at over five minutes against a rate-limited key.
+      Timeout: 900
+      MemorySize: 2048
+      # One retry, not the default two: these jobs call a rate-limited
+      # API, and a third attempt during a 429 window spends quota to fail
+      # again. Failures land on the paper or message row either way, so
+      # the user is told.
+      EventInvokeConfig:
+        MaximumRetryAttempts: 1
+        DestinationConfig:
+          OnFailure:
+            Type: SQS
+            Destination: !GetAtt DeadLetterQueue.Arn
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref UploadBucket
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt DeadLetterQueue.QueueName
+
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "gatemaster-failed-jobs-${Stage}"
+      MessageRetentionPeriod: 1209600   # 14 days, the maximum
+
+  # ------------------------------------------------------------ storage
+
+  UploadBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "gatemaster-uploads-${Stage}-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          # A staged PDF is parsed into rows within minutes and deleted by
+          # the job. This only catches uploads whose job never ran.
+          - Id: expire-staged-uploads
+            Status: Enabled
+            Prefix: uploads/
+            ExpirationInDays: 1
+
+Outputs:
+  ApiUrl:
+    Description: Base URL. Set NEXT_PUBLIC_API_URL to this on Vercel.
+    Value: !Sub "https://${Api}.execute-api.${AWS::Region}.amazonaws.com"
+
+  GoogleRedirectUri:
+    Condition: HasGoogle
+    Description: >
+      Add this to the Google console's Authorised redirect URIs, byte for
+      byte. A trailing slash or a different scheme is a mismatch.
+    Value: !Sub "https://${Api}.execute-api.${AWS::Region}.amazonaws.com/api/auth/google/callback"
+
+  WorkerFunctionName:
+    Value: !Ref WorkerFunction
+
+  DeadLetterQueueUrl:
+    Description: Jobs that failed twice. Worth checking after an import.
+    Value: !Ref DeadLetterQueue
