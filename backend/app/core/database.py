@@ -27,6 +27,21 @@ if IS_SQLITE:
         connect_args={"check_same_thread": False, "timeout": 30.0},
     )
 elif IS_LAMBDA:
+    # Neon's pooled endpoint is a different hostname, not a flag. Getting
+    # it wrong is invisible in testing -- a handful of requests work
+    # fine -- and surfaces only under concurrency, as connection
+    # exhaustion. Warned about rather than rewritten, because silently
+    # editing someone's DSN is its own kind of surprise.
+    if "neon.tech" in DATABASE_URL and "-pooler" not in DATABASE_URL:
+        import warnings
+
+        warnings.warn(
+            "Neon DSN has no '-pooler' in its hostname. On Lambda this "
+            "opens a direct connection per invocation and will exhaust "
+            "max_connections under load. Use the pooled connection string.",
+            RuntimeWarning, stacklevel=2,
+        )
+
     # NullPool, deliberately, and it is the opposite of the usual advice.
     #
     # A pool is per-process, and Lambda gives every concurrent invocation

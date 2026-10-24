@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     # let a deployed instance reach the same database.
     POSTGRESQL_AIVEN_URI: str = ""
 
+    #: Neon. Use the **-pooler** hostname: a serverless function opens a
+    #: connection per invocation, and routing through their PgBouncer is
+    #: what keeps a hundred concurrent Lambdas from exhausting the
+    #: compute's max_connections. The direct hostname works locally and
+    #: fails under load, which is the worst way to find out.
+    NEON_DATABASE_URL: str = ""
+
     # Which backend to prefer when more than one is configured:
     # "aiven", "local" or "sqlite".
     DB_TARGET: str = "local"
@@ -147,6 +154,10 @@ class Settings(BaseSettings):
         if self.DATABASE_URL.strip():
             return self._normalise_dsn(self.DATABASE_URL)
 
+        neon = self._normalise_dsn(self.NEON_DATABASE_URL)
+        if self.DB_TARGET == "neon" and neon:
+            return neon
+
         aiven = self._normalise_dsn(self.POSTGRESQL_AIVEN_URI)
         if self.DB_TARGET == "aiven" and aiven:
             return aiven
@@ -159,8 +170,13 @@ class Settings(BaseSettings):
         url = self.resolved_database_url
         if url.startswith("sqlite"):
             return "sqlite"
-        return "aiven" if self.POSTGRESQL_AIVEN_URI.strip() and \
-            self._normalise_dsn(self.POSTGRESQL_AIVEN_URI) == url else "local-postgres"
+        if self.NEON_DATABASE_URL.strip() and \
+                self._normalise_dsn(self.NEON_DATABASE_URL) == url:
+            return "neon"
+        if self.POSTGRESQL_AIVEN_URI.strip() and \
+                self._normalise_dsn(self.POSTGRESQL_AIVEN_URI) == url:
+            return "aiven"
+        return "local-postgres"
 
     @property
     def gemini_configured(self) -> bool:
