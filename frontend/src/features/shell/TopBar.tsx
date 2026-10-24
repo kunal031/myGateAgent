@@ -3,6 +3,7 @@
 import React from "react";
 import { Menu, Zap } from "lucide-react";
 
+import ProfileMenu from "../profile/ProfileMenu";
 import ThemeSwitcher from "../theme/ThemeSwitcher";
 
 /** Mobile-only header. The sidebar carries branding from md: upward. */
@@ -32,7 +33,10 @@ export default function TopBar({ onMenu }: { onMenu: () => void }) {
         </span>
       </div>
 
-      <ThemeSwitcher compact />
+      <div className="flex items-center gap-2">
+        <ThemeSwitcher compact />
+        <ProfileMenu />
+      </div>
     </header>
   );
 }

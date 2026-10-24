@@ -7,7 +7,10 @@ and HTTP handling in api/.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import agent, auth, assistant, exam, feed, quiz, stats, syllabus, papers
+from .api import (
+    agent, auth, assistant, exam, feed, papers, profile, quiz, stats,
+    syllabus,
+)
 from .core.config import settings
 from .core.lifespan import lifespan
 
@@ -37,6 +40,7 @@ app.include_router(agent.router)
 app.include_router(exam.router)
 app.include_router(assistant.router)
 app.include_router(papers.router)
+app.include_router(profile.router)
 
 
 @app.get("/api/health")

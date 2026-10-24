@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { X, Zap } from "lucide-react";
 
+import ProfileMenu from "../profile/ProfileMenu";
 import ThemeSwitcher from "../theme/ThemeSwitcher";
 import { NAV_ITEMS, isActivePath } from "./nav-items";
 
@@ -113,8 +114,13 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
           })}
         </nav>
 
-        <div className="p-3">
-          <ThemeSwitcher />
+        {/* Profile sits beside the theme switch at the foot of the
+            sidebar, where account controls are conventionally found. */}
+        <div className="flex items-center gap-2 p-3">
+          <div className="min-w-0 flex-1">
+            <ThemeSwitcher />
+          </div>
+          <ProfileMenu placement="above" />
         </div>
       </aside>
     </>

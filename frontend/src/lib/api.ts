@@ -598,3 +598,77 @@ export async function fetchDeepAnalytics(): Promise<DeepAnalytics> {
   if (!res.ok) throw new Error("Could not load analytics");
   return res.json();
 }
+
+// ------------------------------------------------------------- profile
+
+export interface ProfileInfo {
+  id: number;
+  email: string;
+  display_name: string;
+  phone: string;
+  role: "student" | "admin";
+  avatar_url: string | null;
+  has_password: boolean;
+  google_linked: boolean;
+  created_at: string | null;
+  last_login_at: string | null;
+}
+
+export interface ProfileStats {
+  questions: {
+    attempted: number; distinct: number; correct: number; wrong: number;
+    accuracy: number | null; marks_earned: number; minutes_spent: number;
+    by_type: { question_type: string; attempts: number; correct: number;
+               accuracy: number | null }[];
+  };
+  concepts: { learned: number; learning: number; mastered: number; touched: number };
+  cards: { seen: number; views: number; mastered: number };
+  tests: { kind: string; submitted: number; total_score: number;
+           best_score: number; avg_accuracy: number }[];
+  open_mistakes: number;
+  active_days: number;
+}
+
+export async function fetchProfile(): Promise<ProfileInfo> {
+  const res = await fetch(`${API_BASE}/api/profile/me`);
+  if (!res.ok) throw new Error("Could not load your profile");
+  return res.json();
+}
+
+export async function fetchProfileStats(): Promise<ProfileStats> {
+  const res = await fetch(`${API_BASE}/api/profile/me/stats`);
+  if (!res.ok) throw new Error("Could not load your stats");
+  return res.json();
+}
+
+export async function updateProfile(
+  patch: { display_name?: string; phone?: string },
+): Promise<ProfileInfo> {
+  const res = await fetch(`${API_BASE}/api/profile/me`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error("Could not save your profile");
+  return res.json();
+}
+
+/** Returns fresh tokens: changing the password invalidates the old ones,
+ *  so the caller must store these or the user is signed out by the very
+ *  act of changing it. */
+export async function changePassword(
+  current_password: string, new_password: string,
+): Promise<{ access_token: string; refresh_token: string }> {
+  const res = await fetch(`${API_BASE}/api/profile/me/password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ current_password, new_password }),
+  });
+  if (!res.ok) {
+    // The server's message distinguishes a wrong current password from a
+    // reused one, and both are worth showing verbatim.
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.detail ?? "Could not change your password");
+  }
+  return res.json();
+}
