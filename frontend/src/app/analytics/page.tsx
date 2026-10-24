@@ -55,7 +55,7 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      <InsightsPanel />
+      <ConceptRollupPanel />
 
       <DeepPanels />
 
@@ -120,7 +120,7 @@ export default function AnalyticsPage() {
 
       <SubjectDrilldown />
 
-      <ConceptRollupPanel />
+      <InsightsPanel />
     </div>
   );
 }
