@@ -9,6 +9,7 @@ from ..core.database import get_db
 from ..models.models import Question, Subject, Topic, Attempt, MistakeRegistry
 
 from ..models.users import User
+from ..services.activity import record
 
 router = APIRouter(prefix="/api/quiz", tags=["Quiz"])
 
@@ -124,7 +125,15 @@ def submit_answer(payload: AnswerSubmission, db: Session = Depends(get_db),
         created_at=datetime.utcnow()
     )
     db.add(attempt)
-    
+
+    # Same transaction as the attempt: either both land or neither does,
+    # so the log cannot claim an answer that was rolled back.
+    record.record_attempt(
+        db, user_id=user.id, question=q, is_correct=is_correct,
+        marks=marks_awarded, seconds=payload.time_spent_seconds,
+        mode=payload.mode,
+    )
+
     # Update MistakeRegistry
     if not is_correct:
         mistake = db.query(MistakeRegistry).filter(

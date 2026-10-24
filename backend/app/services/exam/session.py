@@ -10,6 +10,7 @@ from ...models.exams import ExamItem, ExamSession, ExamStatus, QuestionState
 from ...models.models import Attempt, MistakeRegistry, Question, Subject
 from .patterns import ExamPattern
 from .scoring import score_item
+from ..activity import record
 
 
 class NotEnoughQuestions(RuntimeError):
@@ -219,6 +220,11 @@ def submit_session(db: Session, session_id: int, *,
             is_correct=is_correct, marks_obtained=marks,
             time_spent_seconds=item.time_spent_seconds, mode=session.kind,
         ))
+        record.record_attempt(
+            db, user_id=session.user_id, question=question,
+            is_correct=is_correct, marks=marks,
+            seconds=item.time_spent_seconds or 0, mode=session.kind,
+        )
 
         if not is_correct:
             mistake = (

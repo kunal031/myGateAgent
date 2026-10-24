@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from ..core.auth import current_user
@@ -250,3 +250,29 @@ def breakdown_concepts(topic_id: int,
     """The concepts of one topic, with what still needs work."""
     from ..services.analytics import breakdown as brk
     return brk.concept_breakdown(db, topic_id, user.id)
+
+
+# ------------------------------------------------------------- calendar
+
+@router.get("/calendar")
+def activity_calendar(days: int = 365,
+                      db: Session = Depends(get_db),
+                      user: User = Depends(current_user)):
+    """Day-level activity totals for the heatmap, plus streaks."""
+    from ..services.analytics import calendar as cal
+    return cal.activity_calendar(db, user.id, days=max(1, min(days, 730)))
+
+
+@router.get("/calendar/{on}")
+def activity_day(on: str,
+                 db: Session = Depends(get_db),
+                 user: User = Depends(current_user)):
+    """Everything done on one day, grouped subject -> chapter -> topic."""
+    from datetime import date as _date
+
+    from ..services.analytics import calendar as cal
+    try:
+        parsed = _date.fromisoformat(on)
+    except ValueError:
+        raise HTTPException(400, "Date must be in YYYY-MM-DD form") from None
+    return cal.day_report(db, user.id, parsed)

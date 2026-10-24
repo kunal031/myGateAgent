@@ -16,6 +16,7 @@ from ..models.users import User
 from ..models.rotation import CardView
 from ..services.feed.progress import record_card_recalled, record_card_seen
 from ..services.feed.ranking import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, get_feed_page
+from ..services.activity import record as activity
 from ..services.feed.tagging import (
     card_metadata, related_cards, set_card_tags, slugify,
 )
@@ -90,6 +91,10 @@ def mark_seen(card_id: int, db: Session = Depends(get_db),
     view.seen_count = (view.seen_count or 0) + 1
     view.last_seen_at = datetime.utcnow()
     record_card_seen(db, card, user_id=user.id)
+    # The append-only event: card_views keeps only last_seen_at, so
+    # without this a day spent reading rather than answering is
+    # unrecoverable and the calendar shows it as empty.
+    activity.record_card_view(db, user_id=user.id, card=card)
     db.commit()
     return {"card_id": card_id, "seen_count": view.seen_count}
 
@@ -109,6 +114,7 @@ def mark_recalled(card_id: int, db: Session = Depends(get_db),
     # only just become true.
     db.flush()
     state = record_card_recalled(db, card, user_id=user.id)
+    activity.record_card_review(db, user_id=user.id, card=card, recalled=True)
     db.commit()
     return {
         "card_id": card_id,
