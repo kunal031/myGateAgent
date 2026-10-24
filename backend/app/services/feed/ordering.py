@@ -9,8 +9,8 @@ consulted.
 Two ideas here.
 
 **Readiness.** A concept whose prerequisites are unlearned sinks rather than
-being blocked. The graph is a clean DAG (164 concepts, 129 edges, no
-cycles), so walking it is well defined; sinking rather than hiding means a
+being blocked. The graph is a clean DAG (282 concepts, 238 edges, 5
+levels, no cycles), so walking it is well defined; sinking rather than hiding means a
 student who wants to jump ahead still can, which a hard gate would prevent.
 
 **Mixing, not blocking.** The obvious design -- march through one concept at
