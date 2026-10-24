@@ -198,14 +198,15 @@ def google_config():
 
 
 @router.get("/google/start")
-def google_start(next: str = ""):
+def google_start(next: str = "", db: Session = Depends(get_db)):
     """Begin Google sign-in by redirecting to Google's consent screen."""
     if not settings.auth_configured:
         raise HTTPException(503, "Authentication is not configured on this server")
     if not settings.google_oauth_configured:
         raise HTTPException(503, "Google sign-in is not configured on this server")
 
-    return RedirectResponse(authorization_url(next_url=next), status_code=307)
+    return RedirectResponse(authorization_url(db, next_url=next),
+                            status_code=307)
 
 
 def _link_or_create(db: Session, identity: GoogleIdentity) -> User:
@@ -300,7 +301,7 @@ def google_callback(
         # Consuming the state proves this callback belongs to a sign-in
         # this server started, which is what stops a forged callback from
         # logging someone into an attacker's account.
-        pending = login_store.consume(state)
+        pending = login_store.consume(db, state)
         id_token = exchange_code(code, pending.verifier)
         identity = verify_id_token(id_token)
     except AuthError as exc:

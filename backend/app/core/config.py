@@ -48,6 +48,13 @@ class Settings(BaseSettings):
     #: for any account -- a weak default here is worse than no auth.
     JWT_SECRET: str = ""
 
+    #: Set by AWS Lambda itself, not by us -- its presence is how the app
+    #: knows it is running serverless, which changes connection pooling
+    #: and disables anything that assumes a long-lived process. Bound to
+    #: the real variable name via alias, since pydantic matches on the
+    #: field name otherwise and would never see it.
+    AWS_LAMBDA_FUNCTION_NAME: str = ""
+
     # ---- Google sign-in ----
     #: From the Google Cloud console, OAuth 2.0 Client ID of type "Web
     #: application". The ID is public -- it ships in the frontend bundle

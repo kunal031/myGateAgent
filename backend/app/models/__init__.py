@@ -9,6 +9,7 @@ is present, whichever model a caller actually needs.
 
 from . import activity  # noqa: F401  (append-only study log)
 from . import chapters  # noqa: F401  (Topic.chapter resolves against this)
+from . import oauth  # noqa: F401  (pending sign-ins, shared across instances)
 from . import models  # noqa: F401  (base tables first)
 from . import (  # noqa: F401
     assistant, concepts, exams, papers, rotation, sources, syllabus, tags,
@@ -16,6 +17,6 @@ from . import (  # noqa: F401
 )
 
 __all__ = [
-    "models", "activity", "chapters", "concepts", "exams", "sources", "syllabus",
+    "models", "activity", "chapters", "oauth", "concepts", "exams", "sources", "syllabus",
     "assistant", "rotation", "tags", "papers", "users",
 ]
