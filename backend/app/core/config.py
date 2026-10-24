@@ -62,6 +62,16 @@ class Settings(BaseSettings):
     #: field name otherwise and would never see it.
     AWS_LAMBDA_FUNCTION_NAME: str = ""
 
+    #: The Lambda function that runs background jobs. Required when
+    #: deployed: without it there is nowhere to send an import, and the
+    #: API would accept the request and drop the work.
+    WORKER_FUNCTION_NAME: str = ""
+
+    #: S3 bucket for uploaded files awaiting a background job. Empty uses
+    #: a temp directory, which is correct locally and wrong on Lambda,
+    #: where the API and worker have separate /tmp.
+    UPLOAD_BUCKET: str = ""
+
     # ---- Google sign-in ----
     #: From the Google Cloud console, OAuth 2.0 Client ID of type "Web
     #: application". The ID is public -- it ships in the frontend bundle

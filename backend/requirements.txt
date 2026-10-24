@@ -51,3 +51,10 @@ Pillow==12.1.0                  # image handling for vision transcription
 python-dotenv==1.2.4
 gdown==6.4.1                    # Google Drive note downloads
 tenacity==9.1.4                 # retry/backoff around rate-limited API calls (<9.2 per google-genai)
+
+# ---- Serverless ----
+mangum==0.19.0                  # API Gateway event -> ASGI
+# Provided by the Lambda runtime; pinned so local runs match what AWS
+# ships rather than drifting from it, and so the worker can invoke and
+# reach S3 outside Lambda too.
+boto3==1.42.2
