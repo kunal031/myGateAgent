@@ -5,7 +5,7 @@ import { Loader2, Send, X } from "lucide-react";
 
 import MathText from "@/components/MathText";
 import {
-  AssistantLanguage, AssistantMessage, FeedCardItem, askAssistant, fetchThread,
+  AssistantLanguage, AssistantMessage, FeedCardItem, askAndWait, fetchThread,
 } from "@/lib/api";
 
 interface Props {
@@ -82,7 +82,18 @@ export default function ChatPanel({
     setBusy(true);
     setDraft("");
     try {
-      await askAssistant({ query: text, thread_id: threadId, language });
+      // Refreshed as soon as the placeholder exists, so the question
+      // appears immediately and the thinking state has something to sit
+      // under. Without this the panel looks frozen for however long
+      // generation takes -- minutes, when the key is rate limited.
+      await askAndWait(
+        { query: text, thread_id: threadId, language },
+        {
+          onPending: () => {
+            void fetchThread(threadId).then((t) => setMessages(t.messages));
+          },
+        },
+      );
       const refreshed = await fetchThread(threadId);
       setMessages(refreshed.messages);
     } catch {

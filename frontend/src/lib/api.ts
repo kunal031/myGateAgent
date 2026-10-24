@@ -214,8 +214,13 @@ export interface AssistantChatResult {
   message_id: number;
   answer: string;
   citations: string[];
-  source_type: string;
+  source_type?: string;
   language: AssistantLanguage;
+  /** "pending" until the worker has generated the answer. The API
+   *  returns immediately because a grounded answer takes far longer than
+   *  API Gateway's 29-second ceiling allows. */
+  status?: "pending" | "ready" | "failed";
+  error?: string;
 }
 
 export type AssistantResult = AssistantFeedResult | AssistantChatResult;
@@ -240,12 +245,71 @@ export interface AssistantMessage {
   role: "user" | "assistant";
   content: string;
   citations: string[];
+  status?: "pending" | "ready" | "failed";
+  error?: string;
   created_at: string | null;
+}
+
+/**
+ * Ask, then wait for the worker to finish.
+ *
+ * The endpoint returns a placeholder immediately, so every caller would
+ * otherwise have to write the same polling loop -- and one that forgot
+ * would silently render an empty answer.
+ *
+ * `onPending` fires once as soon as the placeholder exists, which is what
+ * lets the UI show the question and a thinking state rather than freezing
+ * until the answer lands.
+ */
+export async function askAndWait(
+  body: Parameters<typeof askAssistant>[0],
+  opts: {
+    onPending?: (r: AssistantChatResult) => void;
+    signal?: AbortSignal;
+    /** Generation has been measured at over five minutes when the Gemini
+     *  key is rate limited, so this is generous by design. */
+    timeoutMs?: number;
+  } = {},
+): Promise<AssistantChatResult> {
+  const first = await askAssistant(body);
+  if (first.output !== "chat") {
+    throw new Error("That question was answered with feed filters");
+  }
+  if (first.status !== "pending") return first;
+
+  opts.onPending?.(first);
+
+  const deadline = Date.now() + (opts.timeoutMs ?? 10 * 60 * 1000);
+  // Backs off from half a second to five: a short answer lands almost at
+  // once, and a slow one should not be polled 1,200 times.
+  let waitMs = 500;
+
+  while (Date.now() < deadline) {
+    if (opts.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    await new Promise((r) => setTimeout(r, waitMs));
+    waitMs = Math.min(waitMs * 1.5, 5000);
+
+    const thread = await fetchThread(first.thread_id);
+    const message = thread.messages.find((m) => m.id === first.message_id);
+    if (!message || message.status === "pending") continue;
+
+    if (message.status === "failed") {
+      throw new Error(message.error || "The assistant could not answer that");
+    }
+    return {
+      ...first,
+      status: "ready",
+      answer: message.content,
+      citations: message.citations ?? [],
+    };
+  }
+
+  throw new Error("The assistant is taking longer than expected");
 }
 
 export async function fetchThread(
   threadId: number,
-): Promise<{ id: number; title: string; messages: AssistantMessage[] }> {
+): Promise<{ id: number; title: string; messages: AssistantMessage[]; pending?: boolean }> {
   const res = await fetch(`${API_BASE}/api/assistant/threads/${threadId}`);
   if (!res.ok) throw new Error("Could not load that conversation");
   return res.json();
@@ -289,18 +353,15 @@ export async function fetchStats(): Promise<StatsSummary> {
 export async function chatWithAgent(query: string, subjectSlug?: string): Promise<AgentChatResponse> {
   // /api/agent/chat was never built; the assistant lives at /api/assistant/ask.
   // Its reply is reshaped here so callers of this function stay unchanged.
-  const res = await fetch(`${API_BASE}/api/assistant/ask`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, subject_slug: subjectSlug }),
-  });
-  if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(
-      `Assistant request failed (${res.status})${detail ? `: ${detail.slice(0, 200)}` : ""}`,
-    );
-  }
-  const data = await res.json();
+  //
+  // Through askAndWait because this caller renders the answer directly:
+  // the endpoint returns a placeholder, so reading data.answer from the
+  // first response would render an empty reply.
+  // subjectSlug is accepted for call-site compatibility and not sent:
+  // AskRequest has no such field, so the server has always ignored it.
+  // The subject is inferred from the question by intent parsing instead.
+  void subjectSlug;
+  const data = await askAndWait({ query });
   return {
     reply: data.answer ?? "",
     source: data.source_type ?? "knowledge_base",
