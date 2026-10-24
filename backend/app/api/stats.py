@@ -225,31 +225,35 @@ def breakdown_subjects(db: Session = Depends(get_db),
     return brk.subject_breakdown(db, user.id)
 
 
-@router.get("/breakdown/subject/{subject_id}")
-def breakdown_chapters(subject_id: int,
+@router.get("/breakdown/{level}/{node_id}")
+def breakdown_children(level: str, node_id: int,
                        db: Session = Depends(get_db),
                        user: User = Depends(current_user)):
-    """The chapters of one subject."""
+    """The children of any node, at any level.
+
+    One endpoint rather than one per level, because every level returns
+    the same node shape: the client walks the tree with `level` and `id`
+    taken straight off the node it is expanding, instead of choosing a
+    different URL and a different type at each depth.
+
+    The level named is the *parent's* -- asking for the children of a
+    subject returns chapters.
+    """
     from ..services.analytics import breakdown as brk
-    return brk.chapter_breakdown(db, subject_id, user.id)
 
+    fetch = {
+        "subject": brk.chapter_breakdown,
+        "chapter": brk.topic_breakdown,
+        "topic": brk.concept_breakdown,
+    }.get(level)
 
-@router.get("/breakdown/chapter/{chapter_id}")
-def breakdown_topics(chapter_id: int,
-                     db: Session = Depends(get_db),
-                     user: User = Depends(current_user)):
-    """The topics of one chapter."""
-    from ..services.analytics import breakdown as brk
-    return brk.topic_breakdown(db, chapter_id, user.id)
-
-
-@router.get("/breakdown/topic/{topic_id}")
-def breakdown_concepts(topic_id: int,
-                       db: Session = Depends(get_db),
-                       user: User = Depends(current_user)):
-    """The concepts of one topic, with what still needs work."""
-    from ..services.analytics import breakdown as brk
-    return brk.concept_breakdown(db, topic_id, user.id)
+    if fetch is None:
+        raise HTTPException(
+            404,
+            f"Cannot expand {level!r}. Expandable levels are: "
+            "subject, chapter, topic.",
+        )
+    return fetch(db, node_id, user.id)
 
 
 # ------------------------------------------------------------- calendar

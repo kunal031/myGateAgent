@@ -2,135 +2,31 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  ChevronRight, CircleDashed, CircleCheck, CircleDot, Loader2,
+  ChevronRight, CircleCheck, CircleDashed, CircleDot, Loader2,
 } from "lucide-react";
 
 import {
-  ChapterRow, ConceptRow, SubjectRow, TopicRow, fetchChapterBreakdown,
-  fetchConceptBreakdown, fetchSubjectBreakdown, fetchTopicBreakdown,
+  BreakdownNode, fetchBreakdown, fetchBreakdownChildren,
 } from "@/lib/api";
 
 /**
  * Subject -> Chapter -> Topic -> Concept, expanded one level at a time.
  *
- * Each level is fetched when its row is opened rather than up front. The
- * whole tree is 11 subjects, 39 chapters, 57 topics and 282 concepts, and
- * loading it to render eleven rows would spend the request on data the
- * student will not look at.
+ * One recursive component, because every level returns the same node
+ * shape. A node carries its own `level` and `id`, so expanding anything
+ * is the same call at any depth and adding a fifth level would need no
+ * new component, type or fetch.
  *
- * Results are cached per id, so collapsing and reopening a row does not
- * refetch -- a drill-down is explored by opening and closing, and
- * refetching on every toggle makes it feel broken.
+ * Children are fetched when a row is opened rather than up front: the
+ * whole tree is 11 subjects, 39 chapters, 57 topics and 282 concepts, and
+ * loading all of it to render eleven rows spends the request on data that
+ * will not be looked at. Each node caches its own children, so collapsing
+ * and reopening does not refetch -- a tree is explored by opening and
+ * closing, and refetching every toggle makes it feel broken.
  */
 
 const ACCURACY_GOOD = 75;
 const ACCURACY_FAIR = 50;
-
-function accuracyColour(accuracy: number | null): string {
-  if (accuracy === null) return "var(--ink-faint)";
-  if (accuracy >= ACCURACY_GOOD) return "var(--ok, #10b981)";
-  if (accuracy >= ACCURACY_FAIR) return "var(--warn, #f59e0b)";
-  return "var(--bad, #f43f5e)";
-}
-
-/** Coverage and accuracy together, since either alone misleads: 100% of
- *  three questions is not mastery, and 20 attempts at 40% is not progress. */
-function Metrics({ row }: { row: {
-  attempted: number; correct: number; accuracy: number | null;
-  available: number; covered: number; repeats: number;
-} }) {
-  const coverage = row.available
-    ? Math.round((row.covered / row.available) * 100)
-    : 0;
-
-  return (
-    <div className="flex shrink-0 items-center gap-3 text-[11px]">
-      <span className="hidden font-mono sm:inline" style={{ color: "var(--ink-faint)" }}>
-        {row.covered}/{row.available}
-        {row.repeats > 0 && (
-          <span title={`${row.repeats} repeat attempt(s)`}> +{row.repeats}</span>
-        )}
-      </span>
-
-      <div className="hidden h-1 w-16 overflow-hidden rounded-full sm:block"
-           style={{ background: "var(--surface-sunk)" }}
-           title={`${coverage}% of questions seen`}>
-        <div className="h-full" style={{
-          width: `${coverage}%`, background: "var(--ink-faint)",
-        }} />
-      </div>
-
-      <span className="w-12 text-right font-mono font-bold"
-            style={{ color: accuracyColour(row.accuracy) }}>
-        {row.accuracy === null ? "—" : `${row.accuracy}%`}
-      </span>
-    </div>
-  );
-}
-
-function Caret({ open }: { open: boolean }) {
-  return (
-    <ChevronRight
-      className="h-3.5 w-3.5 shrink-0 transition-transform"
-      style={{
-        color: "var(--ink-faint)",
-        transform: open ? "rotate(90deg)" : "none",
-      }}
-    />
-  );
-}
-
-/** One expandable row. Indentation carries the level, so the four tiers
- *  read as a tree rather than four identical lists. */
-function Row({ depth, open, onToggle, label, meta, right, muted }: {
-  depth: number;
-  open?: boolean;
-  onToggle?: () => void;
-  label: string;
-  meta?: string;
-  right?: React.ReactNode;
-  muted?: boolean;
-}) {
-  const Tag = onToggle ? "button" : "div";
-  return (
-    <Tag
-      {...(onToggle ? { type: "button" as const, onClick: onToggle } : {})}
-      className="flex w-full items-center gap-2 px-3 py-2 text-left hover:opacity-80"
-      style={{
-        paddingLeft: `${12 + depth * 16}px`,
-        borderTop: "var(--line-width) solid var(--line)",
-        background: depth === 0 ? "transparent" : "var(--surface-sunk)",
-      }}
-    >
-      {onToggle ? <Caret open={!!open} /> : <span className="w-3.5 shrink-0" />}
-
-      <span className="min-w-0 flex-1 truncate text-[12px]"
-            style={{
-              color: muted ? "var(--ink-faint)" : "var(--ink)",
-              fontWeight: depth === 0 ? 700 : 500,
-            }}>
-        {label}
-        {meta && (
-          <span className="ml-1.5 text-[10px] font-normal"
-                style={{ color: "var(--ink-faint)" }}>
-            {meta}
-          </span>
-        )}
-      </span>
-
-      {right}
-    </Tag>
-  );
-}
-
-function Spinner() {
-  return (
-    <div className="flex justify-center py-3">
-      <Loader2 className="h-3.5 w-3.5 animate-spin"
-               style={{ color: "var(--ink-faint)" }} />
-    </div>
-  );
-}
 
 const STATUS_ICON: Record<string, typeof CircleDot> = {
   not_started: CircleDashed,
@@ -140,168 +36,182 @@ const STATUS_ICON: Record<string, typeof CircleDot> = {
   mastered: CircleCheck,
 };
 
-function Concepts({ rows }: { rows: ConceptRow[] }) {
-  if (rows.length === 0) {
-    return (
-      <p className="px-3 py-2 text-[11px]"
-         style={{ paddingLeft: "60px", color: "var(--ink-faint)",
-                  borderTop: "var(--line-width) solid var(--line)" }}>
-        No concepts recorded under this topic yet.
-      </p>
-    );
-  }
+function accuracyColour(accuracy: number | null): string {
+  if (accuracy === null) return "var(--ink-faint)";
+  if (accuracy >= ACCURACY_GOOD) return "var(--ok, #10b981)";
+  if (accuracy >= ACCURACY_FAIR) return "var(--warn, #f59e0b)";
+  return "var(--bad, #f43f5e)";
+}
+
+/**
+ * The metrics every row shows.
+ *
+ * Coverage sits beside accuracy because either alone misleads: 100% of
+ * three questions is not mastery, and 20 attempts at 40% is not progress.
+ * A concept shows cards instead of questions, since no question carries a
+ * concept id -- the unit differs, the meaning does not.
+ */
+function Metrics({ node }: { node: BreakdownNode }) {
+  const isConcept = node.level === "concept";
+  const done = isConcept ? node.cards_seen : node.covered;
+  const total = isConcept ? node.cards : node.available;
+
+  const rightValue = isConcept
+    ? (node.coverage > 0 ? `${node.coverage}%` : "—")
+    : (node.accuracy === null ? "—" : `${node.accuracy}%`);
+
+  const rightColour = isConcept
+    ? (node.coverage >= 100 ? "var(--ok, #10b981)"
+      : node.coverage > 0 ? "var(--warn, #f59e0b)"
+      : "var(--ink-faint)")
+    : accuracyColour(node.accuracy);
+
+  const Icon = STATUS_ICON[node.status] ?? null;
 
   return (
-    <>
-      {rows.map((concept) => {
-        const Icon = STATUS_ICON[concept.status] ?? CircleDashed;
-        return (
-          <Row
-            key={concept.concept_id}
-            depth={3}
-            label={concept.concept_name}
-            muted={concept.status === "not_started"}
-            right={
-              <span className="flex shrink-0 items-center gap-1.5 text-[10px]"
-                    style={{ color: "var(--ink-faint)" }}>
-                {concept.cards_seen > 0 && (
-                  <span className="font-mono">{concept.cards_seen} seen</span>
-                )}
-                <Icon className="h-3.5 w-3.5"
-                      style={{
-                        color: concept.needs_work
-                          ? "var(--ink-faint)"
-                          : "var(--ok, #10b981)",
-                      }} />
-              </span>
-            }
-          />
-        );
-      })}
-    </>
+    <div className="flex shrink-0 items-center gap-3 text-[11px]">
+      <span className="hidden font-mono sm:inline"
+            style={{ color: "var(--ink-faint)" }}
+            title={isConcept
+              ? `${done} of ${total} cards read`
+              : `${done} of ${total} questions seen`}>
+        {done}/{total}
+        {node.repeats > 0 && (
+          <span title={`${node.repeats} repeat attempt(s)`}> +{node.repeats}</span>
+        )}
+        {isConcept && node.cards_mastered > 0 && (
+          <span title={`${node.cards_mastered} mastered`}>
+            {" "}&#9733;{node.cards_mastered}
+          </span>
+        )}
+      </span>
+
+      <div className="hidden h-1 w-16 overflow-hidden rounded-full sm:block"
+           style={{ background: "var(--surface-sunk)" }}
+           title={`${node.coverage}% covered`}>
+        <div className="h-full" style={{
+          width: `${Math.min(node.coverage, 100)}%`,
+          background: "var(--ink-faint)",
+        }} />
+      </div>
+
+      <span className="w-12 text-right font-mono font-bold"
+            style={{ color: rightColour }}>
+        {rightValue}
+      </span>
+
+      {Icon && (
+        <Icon className="h-3.5 w-3.5 shrink-0"
+              style={{
+                color: node.status === "not_started"
+                  ? "var(--ink-faint)" : "var(--ok, #10b981)",
+              }} />
+      )}
+    </div>
   );
 }
 
-function TopicNode({ topic }: { topic: TopicRow }) {
-  const [open, setOpen] = useState(false);
-  const [concepts, setConcepts] = useState<ConceptRow[] | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const toggle = useCallback(() => {
-    setOpen((wasOpen) => {
-      if (!wasOpen && concepts === null && !loading) {
-        setLoading(true);
-        fetchConceptBreakdown(topic.topic_id)
-          .then(setConcepts)
-          .catch(() => setConcepts([]))
-          .finally(() => setLoading(false));
-      }
-      return !wasOpen;
-    });
-  }, [concepts, loading, topic.topic_id]);
-
-  return (
-    <>
-      <Row
-        depth={2}
-        open={open}
-        onToggle={toggle}
-        label={topic.topic_name}
-        meta={topic.concepts > 0 ? `${topic.concepts} concepts` : undefined}
-        right={<Metrics row={topic} />}
-      />
-      {open && (loading ? <Spinner /> : <Concepts rows={concepts ?? []} />)}
-    </>
-  );
+/** What the row says beside its name, which differs by level. */
+function metaFor(node: BreakdownNode): string | undefined {
+  if (node.level === "subject") return `~${node.weight}M`;
+  if (node.level === "concept") return node.weight ? `${node.weight}w` : undefined;
+  return node.children > 0
+    ? `${node.children} ${node.level === "chapter" ? "topics" : "concepts"}`
+    : undefined;
 }
 
-function ChapterNode({ chapter }: { chapter: ChapterRow }) {
+function Node({ node, depth }: { node: BreakdownNode; depth: number }) {
   const [open, setOpen] = useState(false);
-  const [topics, setTopics] = useState<TopicRow[] | null>(null);
+  const [children, setChildren] = useState<BreakdownNode[] | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // A chapter with no id is the "Unassigned" bucket, which has no
-  // endpoint to expand -- it exists to make a mapping gap visible.
-  const expandable = chapter.chapter_id !== null;
+  const expandable = node.expandable && node.id !== null;
 
   const toggle = useCallback(() => {
     if (!expandable) return;
     setOpen((wasOpen) => {
-      if (!wasOpen && topics === null && !loading) {
+      if (!wasOpen && children === null && !loading) {
         setLoading(true);
-        fetchTopicBreakdown(chapter.chapter_id as number)
-          .then(setTopics)
-          .catch(() => setTopics([]))
+        fetchBreakdownChildren(node.level, node.id as number)
+          .then(setChildren)
+          .catch(() => setChildren([]))
           .finally(() => setLoading(false));
       }
       return !wasOpen;
     });
-  }, [chapter.chapter_id, expandable, loading, topics]);
+  }, [children, expandable, loading, node.id, node.level]);
+
+  const meta = metaFor(node);
+  const Tag = expandable ? "button" : "div";
 
   return (
     <>
-      <Row
-        depth={1}
-        open={open}
-        onToggle={expandable ? toggle : undefined}
-        label={chapter.chapter_name}
-        muted={!expandable}
-        right={<Metrics row={chapter} />}
-      />
-      {open && (loading ? <Spinner />
-        : (topics ?? []).map((topic) => (
-            <TopicNode key={topic.topic_id} topic={topic} />
-          )))}
-    </>
-  );
-}
+      <Tag
+        {...(expandable ? { type: "button" as const, onClick: toggle } : {})}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:opacity-80"
+        style={{
+          paddingLeft: `${12 + depth * 16}px`,
+          borderTop: "var(--line-width) solid var(--line)",
+          background: depth === 0 ? "transparent" : "var(--surface-sunk)",
+        }}
+      >
+        {expandable ? (
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 transition-transform"
+                        style={{
+                          color: "var(--ink-faint)",
+                          transform: open ? "rotate(90deg)" : "none",
+                        }} />
+        ) : (
+          <span className="w-3.5 shrink-0" />
+        )}
 
-function SubjectNode({ subject }: { subject: SubjectRow }) {
-  const [open, setOpen] = useState(false);
-  const [chapters, setChapters] = useState<ChapterRow[] | null>(null);
-  const [loading, setLoading] = useState(false);
+        <span className="min-w-0 flex-1 truncate text-[12px]"
+              style={{
+                color: expandable ? "var(--ink)" : "var(--ink-soft)",
+                fontWeight: depth === 0 ? 700 : 500,
+              }}>
+          {node.name}
+          {meta && (
+            <span className="ml-1.5 text-[10px] font-normal"
+                  style={{ color: "var(--ink-faint)" }}>
+              {meta}
+            </span>
+          )}
+        </span>
 
-  const toggle = useCallback(() => {
-    setOpen((wasOpen) => {
-      if (!wasOpen && chapters === null && !loading) {
-        setLoading(true);
-        fetchChapterBreakdown(subject.subject_id)
-          .then(setChapters)
-          .catch(() => setChapters([]))
-          .finally(() => setLoading(false));
-      }
-      return !wasOpen;
-    });
-  }, [chapters, loading, subject.subject_id]);
+        <Metrics node={node} />
+      </Tag>
 
-  return (
-    <>
-      <Row
-        depth={0}
-        open={open}
-        onToggle={toggle}
-        label={subject.subject_name}
-        meta={`~${subject.weightage_marks}M`}
-        right={<Metrics row={subject} />}
-      />
-      {open && (loading ? <Spinner />
-        : (chapters ?? []).map((chapter) => (
-            <ChapterNode
-              key={chapter.chapter_id ?? `unassigned-${subject.subject_id}`}
-              chapter={chapter}
-            />
-          )))}
+      {open && (loading ? (
+        <div className="flex justify-center py-3">
+          <Loader2 className="h-3.5 w-3.5 animate-spin"
+                   style={{ color: "var(--ink-faint)" }} />
+        </div>
+      ) : children && children.length === 0 ? (
+        <p className="py-2 text-[11px]"
+           style={{
+             paddingLeft: `${44 + depth * 16}px`,
+             color: "var(--ink-faint)",
+             borderTop: "var(--line-width) solid var(--line)",
+           }}>
+          Nothing recorded here yet.
+        </p>
+      ) : (
+        children?.map((child) => (
+          <Node key={`${child.level}-${child.id}`} node={child} depth={depth + 1} />
+        ))
+      ))}
     </>
   );
 }
 
 export default function SubjectDrilldown() {
-  const [subjects, setSubjects] = useState<SubjectRow[] | null>(null);
+  const [subjects, setSubjects] = useState<BreakdownNode[] | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
-    fetchSubjectBreakdown()
+    fetchBreakdown()
       .then((rows) => !cancelled && setSubjects(rows))
       .catch((err) => !cancelled
         && setError(err instanceof Error ? err.message : "Could not load"));
@@ -319,7 +229,7 @@ export default function SubjectDrilldown() {
           Subject breakdown
         </h3>
         <p className="text-[10px]" style={{ color: "var(--ink-faint)" }}>
-          seen/total · accuracy
+          seen/total · coverage · accuracy
         </p>
       </header>
 
@@ -329,10 +239,15 @@ export default function SubjectDrilldown() {
         </p>
       )}
 
-      {!subjects && !error && <Spinner />}
+      {!subjects && !error && (
+        <div className="flex justify-center py-6">
+          <Loader2 className="h-4 w-4 animate-spin"
+                   style={{ color: "var(--ink-faint)" }} />
+        </div>
+      )}
 
       {subjects?.map((subject) => (
-        <SubjectNode key={subject.subject_id} subject={subject} />
+        <Node key={`subject-${subject.id}`} node={subject} depth={0} />
       ))}
     </section>
   );
