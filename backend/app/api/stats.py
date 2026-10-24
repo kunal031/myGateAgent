@@ -280,3 +280,23 @@ def activity_day(on: str,
     except ValueError:
         raise HTTPException(400, "Date must be in YYYY-MM-DD form") from None
     return cal.day_report(db, user.id, parsed)
+
+
+@router.get("/concepts/{view}")
+def concept_rollup(view: str,
+                   db: Session = Depends(get_db),
+                   user: User = Depends(current_user)):
+    """Concepts in one state, grouped subject -> chapter -> topic.
+
+    `view` is one of: fix (untouched or still learning), learned, revised.
+
+    The drill-down answers "how am I doing in Operating Systems". This
+    answers the other direction -- "where are the concepts I still have
+    to fix" -- over the same hierarchy.
+    """
+    from ..services.analytics import breakdown as brk
+    try:
+        return brk.concept_rollup(db, user.id, view)
+    except ValueError as exc:
+        raise HTTPException(
+            404, f"{exc}. Views are: fix, learned, revised.") from exc

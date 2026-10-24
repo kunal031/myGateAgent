@@ -24,6 +24,8 @@ interface Props {
   onMastered: (id: number) => void;
   /** Opens the assistant with this card already in context. */
   onExplain: (card: FeedCardItem) => void;
+  /** Mark the whole concept, not just this card. */
+  onMarkConcept?: (conceptId: number, action: "learn" | "revise") => void;
   /** Only passed for cards the student wrote; generated ones are fixed. */
   onEdit?: (card: FeedCardItem) => void;
   onDelete?: (card: FeedCardItem) => void;
@@ -32,7 +34,8 @@ interface Props {
 }
 
 export default function FeedCard({
-  card, onMastered, onExplain, onEdit, onDelete, leaving = false,
+  card, onMastered, onExplain, onMarkConcept, onEdit, onDelete,
+  leaving = false,
 }: Props) {
   const meta = TYPE_META[card.card_type] ?? TYPE_META.CONCEPT;
   const Icon = meta.icon;
@@ -168,6 +171,37 @@ export default function FeedCard({
           <Check className="h-3.5 w-3.5" />
           Got it
         </button>
+
+        {card.concept_id != null && onMarkConcept && (
+          <>
+            <button
+              type="button"
+              onClick={() => onMarkConcept(card.concept_id as number, "learn")}
+              title="Mark this concept learned"
+              aria-label={`Mark the concept behind ${card.title} as learned`}
+              className="flex min-h-11 w-11 items-center justify-center text-[13px] font-extrabold"
+              style={{
+                color: "var(--ink)",
+                borderLeft: "var(--line-width) solid var(--line)",
+              }}
+            >
+              L
+            </button>
+            <button
+              type="button"
+              onClick={() => onMarkConcept(card.concept_id as number, "revise")}
+              title="Mark this concept revised"
+              aria-label={`Mark the concept behind ${card.title} as revised`}
+              className="flex min-h-11 w-11 items-center justify-center text-[13px] font-extrabold"
+              style={{
+                color: "var(--ink)",
+                borderLeft: "var(--line-width) solid var(--line)",
+              }}
+            >
+              R
+            </button>
+          </>
+        )}
 
         <button
           type="button"

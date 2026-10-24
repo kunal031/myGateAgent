@@ -730,3 +730,45 @@ export async function fetchBreakdownChildren(
   if (!res.ok) throw new Error("Could not load that level");
   return res.json();
 }
+
+/** Mark a concept learned or revised directly, on the student's own
+ *  judgement, rather than inferring it from card-by-card recall. */
+export async function markConcept(
+  conceptId: number, action: "learn" | "revise" | "undo",
+): Promise<{ concept_id: number; status: string; revision_count: number }> {
+  const res = await fetch(`${API_BASE}/api/feed/concepts/${conceptId}/mark`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action }),
+  });
+  if (!res.ok) throw new Error("Could not update that concept");
+  return res.json();
+}
+
+/** Concepts in one state, grouped subject -> chapter -> topic. */
+export interface ConceptRollup {
+  view: string;
+  total: number;
+  subjects: RollupNode[];
+}
+
+export interface RollupNode {
+  level: "subject" | "chapter" | "topic" | "concept";
+  id: number | null;
+  name: string;
+  count?: number;
+  weight?: number;
+  status?: string;
+  revisions?: number;
+  last_revised_at?: string | null;
+  children?: RollupNode[];
+  concepts?: RollupNode[];
+}
+
+export async function fetchConceptRollup(
+  view: "fix" | "learned" | "revised",
+): Promise<ConceptRollup> {
+  const res = await fetch(`${API_BASE}/api/stats/concepts/${view}`);
+  if (!res.ok) throw new Error("Could not load that view");
+  return res.json();
+}

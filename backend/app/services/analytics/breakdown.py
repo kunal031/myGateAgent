@@ -468,3 +468,108 @@ def full_tree(db: Session, user_id: int, subject_id: int | None = None) -> list[
                     db, topic["topic_id"], user_id
                 )
     return subjects
+
+
+#: Which concept statuses each analytics view shows.
+VIEW_STATUSES: dict[str, tuple[str, ...]] = {
+    # What to fix: started but not yet learned, plus anything untouched.
+    "fix": (ConceptStatus.NOT_STARTED, ConceptStatus.LEARNING),
+    "learned": (ConceptStatus.LEARNED, ConceptStatus.REVISED,
+                ConceptStatus.MASTERED),
+    "revised": (ConceptStatus.REVISED, ConceptStatus.MASTERED),
+}
+
+
+def concept_rollup(db: Session, user_id: int, view: str) -> dict:
+    """Concepts in one state, grouped Subject -> Chapter -> Topic.
+
+    The drill-down answers "how am I doing in Operating Systems". This
+    answers the other direction: "where are the concepts I still have to
+    fix", starting from the subject and narrowing down. Same hierarchy,
+    filtered by state rather than walked by curiosity.
+
+    Built in one query and grouped in Python rather than three nested
+    endpoints, because a filtered view is small -- it is a worklist, and
+    a worklist of 282 rows is already too long to act on.
+    """
+    statuses = VIEW_STATUSES.get(view)
+    if statuses is None:
+        raise ValueError(f"Unknown view {view!r}")
+
+    # Left join: a concept with no progress row has never been touched,
+    # which is exactly what the "fix" view must include. An inner join
+    # would silently show only concepts already started -- the ones
+    # needing least attention.
+    rows = (
+        db.query(
+            Subject.id, Subject.name, Subject.weightage_marks,
+            Chapter.id, Chapter.name,
+            Topic.id, Topic.name,
+            Concept.id, Concept.name, Concept.exam_weight,
+            ConceptProgress.status, ConceptProgress.revision_count,
+            ConceptProgress.last_revised_at,
+        )
+        .select_from(Concept)
+        .join(Topic, Topic.id == Concept.topic_id)
+        .join(Subject, Subject.id == Concept.subject_id)
+        .outerjoin(Chapter, Chapter.id == Topic.chapter_id)
+        .outerjoin(
+            ConceptProgress,
+            (ConceptProgress.concept_id == Concept.id)
+            & (ConceptProgress.user_id == user_id),
+        )
+        .order_by(Subject.id, Chapter.sequence, Topic.sequence,
+                  Concept.sequence)
+        .all()
+    )
+
+    include_untouched = ConceptStatus.NOT_STARTED in statuses
+
+    tree: dict = {}
+    total = 0
+    for (sid, sname, sweight, chid, chname, tid, tname,
+         cid, cname, cweight, status, revisions, revised_at) in rows:
+        effective = status or ConceptStatus.NOT_STARTED
+        if effective not in statuses:
+            continue
+        if effective == ConceptStatus.NOT_STARTED and not include_untouched:
+            continue
+
+        subject = tree.setdefault(sid, {
+            "level": "subject", "id": sid, "name": sname,
+            "weight": float(sweight or 0), "count": 0, "children": {},
+        })
+        chapter = subject["children"].setdefault(chid, {
+            "level": "chapter", "id": chid,
+            "name": chname or "Unassigned", "count": 0, "children": {},
+        })
+        topic = chapter["children"].setdefault(tid, {
+            "level": "topic", "id": tid, "name": tname,
+            "count": 0, "concepts": [],
+        })
+
+        topic["concepts"].append({
+            "level": "concept", "id": cid, "name": cname,
+            "weight": float(cweight or 1.0),
+            "status": effective,
+            "revisions": int(revisions or 0),
+            "last_revised_at": (
+                revised_at.isoformat() if revised_at else None
+            ),
+        })
+        for node in (subject, chapter, topic):
+            node["count"] += 1
+        total += 1
+
+    def nest(node: dict) -> dict:
+        out = {k: v for k, v in node.items() if k != "children"}
+        if "children" in node:
+            out["children"] = [nest(child)
+                               for child in node["children"].values()]
+        return out
+
+    subjects = [nest(s) for s in tree.values()]
+    # Heaviest subject first: where the marks are decides what to fix next.
+    subjects.sort(key=lambda s: (-s.get("weight", 0), -s["count"]))
+
+    return {"view": view, "total": total, "subjects": subjects}

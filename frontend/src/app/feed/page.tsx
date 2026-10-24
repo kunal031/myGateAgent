@@ -15,6 +15,7 @@ import {
 import {
   AssistantLanguage, FeedCardItem, FeedFilters, SubjectItem,
   askAssistant, deleteUserCard, fetchSyllabus, markCardRecalled,
+  markConcept,
 } from "@/lib/api";
 
 const MODES = [
@@ -82,6 +83,17 @@ export default function FeedPage() {
 
   // Fade the card out, record the recall, then remove it so the columns
   // reflow rather than snapping.
+  const handleMarkConcept = useCallback(
+    (conceptId: number, action: "learn" | "revise") => {
+      // The card stays: marking the concept is a statement about the
+      // idea, not about having finished reading this one card.
+      void markConcept(conceptId, action)
+        .then(() => setProgressKey((n) => n + 1))
+        .catch(() => {});
+    },
+    [],
+  );
+
   const handleMastered = useCallback(
     (id: number) => {
       setLeaving((prev) => new Set(prev).add(id));
@@ -305,6 +317,7 @@ export default function FeedPage() {
               leaving={leaving.has(card.id)}
               onMastered={handleMastered}
               onExplain={handleExplain}
+              onMarkConcept={handleMarkConcept}
               onEdit={openComposer}
               onDelete={handleDelete}
             />
