@@ -177,16 +177,27 @@ export default function SignInScreen() {
           {mode === "in" ? "Sign in" : "Create account"}
         </button>
 
-        <button
-          type="button"
-          onClick={() => { setMode(mode === "in" ? "up" : "in"); setError(""); }}
-          className="w-full text-[11px] font-semibold"
-          style={{ color: "var(--ink-faint)" }}
-        >
-          {mode === "in"
-            ? "No account yet? Create one"
-            : "Already have an account? Sign in"}
-        </button>
+        {/* Hidden once Google is configured: password registration is
+            closed to everyone but the very first account, so a visible
+            "create one" link would lead straight to a 403. */}
+        {!googleReady && (
+          <button
+            type="button"
+            onClick={() => { setMode(mode === "in" ? "up" : "in"); setError(""); }}
+            className="w-full text-[11px] font-semibold"
+            style={{ color: "var(--ink-faint)" }}
+          >
+            {mode === "in"
+              ? "No account yet? Create one"
+              : "Already have an account? Sign in"}
+          </button>
+        )}
+
+        {googleReady && mode === "in" && (
+          <p className="text-center text-[11px]" style={{ color: "var(--ink-faint)" }}>
+            New here? Use Google above — it verifies your email.
+          </p>
+        )}
       </form>
     </div>
   );

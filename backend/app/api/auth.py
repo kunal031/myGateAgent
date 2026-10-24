@@ -68,12 +68,30 @@ def _public(user: User) -> dict:
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     """Create an account.
 
-    The first account to exist becomes the admin: someone has to be able
-    to ingest sources and generate content, and there is no bootstrap step
-    otherwise. Every account after it is a student.
+    Password registration is closed once an account exists. New accounts
+    come in through Google, which hands over an email Google has already
+    verified -- so there is no OTP to send, store, expire or leak, and no
+    route by which someone can claim an address they do not own.
+
+    The first account is still allowed through, because a fresh deployment
+    with Google unconfigured would otherwise have no way in at all. That
+    account becomes the admin.
+
+    Existing accounts keep signing in with their password; only creating
+    new ones this way is closed.
     """
     if not settings.auth_configured:
         raise HTTPException(503, "Authentication is not configured on this server")
+
+    # Checked before the email is even read, so the reply cannot differ
+    # based on whether that address happens to exist.
+    bootstrap = db.query(User.id).first() is None
+    if not bootstrap:
+        raise HTTPException(
+            403,
+            "New accounts are created with Google sign-in, which verifies "
+            "your email address. Use the Continue with Google button.",
+        )
 
     email = payload.email.lower().strip()
     if db.query(User.id).filter(User.email == email).first():
@@ -84,12 +102,12 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
-    first = db.query(User.id).first() is None
     user = User(
         email=email,
         display_name=payload.display_name.strip()[:120],
         password_hash=password_hash,
-        role=UserRole.ADMIN if first else UserRole.STUDENT,
+        # Only reachable when this is the first account, so always admin.
+        role=UserRole.ADMIN,
     )
     db.add(user)
     db.commit()
