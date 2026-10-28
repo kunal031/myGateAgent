@@ -1,14 +1,13 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import Link from "next/link";
 
 import CoverageHeader from "@/features/analytics/CoverageHeader";
 import DeepPanels from "@/features/analytics/DeepPanels";
 import SubjectDrilldown from "@/features/analytics/SubjectDrilldown";
 import InsightsPanel from "@/features/analytics/InsightsPanel";
-import {
-  BarChart3, BookOpen, CheckCircle, ShieldAlert, TrendingUp,
-} from "lucide-react";
+import { ArrowRight, BarChart3, ShieldAlert } from "lucide-react";
 import { fetchStats, StatsSummary } from "@/lib/api";
 
 export default function AnalyticsPage() {
@@ -37,8 +36,6 @@ export default function AnalyticsPage() {
     );
   }
 
-  const accuracy = stats?.accuracy || 0;
-
   return (
     <div className="max-w-5xl mx-auto space-y-4">
       {/* Header */}
@@ -55,70 +52,31 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      <DeepPanels />
-
-      {/* KPI Cards Row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {/* Total Questions Attempted */}
-        <div className="p-4 rounded-xl bg-[var(--surface)] border border-[var(--line)]">
-          <div className="flex items-center justify-between text-[var(--ink-faint)] text-xs font-semibold">
-            <span>Attempted</span>
-            <BookOpen className="w-3.5 h-3.5 text-[var(--ink)]" />
-          </div>
-          <div className="text-2xl font-black text-[var(--ink)] font-mono mt-1">
-            {stats?.total_attempts || 0}
-          </div>
-          <div className="text-[10px] text-[var(--ink-faint)] font-mono mt-0.5">
-            {stats?.correct_attempts || 0} correct
-          </div>
-        </div>
-
-        {/* Global Accuracy */}
-        <div className="p-4 rounded-xl bg-[var(--surface)] border border-[var(--line)]">
-          <div className="flex items-center justify-between text-[var(--ink-faint)] text-xs font-semibold">
-            <span>Accuracy</span>
-            <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
-          </div>
-          <div className="text-2xl font-black text-emerald-400 font-mono mt-1">
-            {accuracy}%
-          </div>
-          <div className="text-[10px] text-[var(--ink-faint)] font-mono mt-0.5">
-            Target &gt; 85%
-          </div>
-        </div>
-
-        {/* Total Score Accrued */}
-        <div className="p-4 rounded-xl bg-[var(--surface)] border border-[var(--line)]">
-          <div className="flex items-center justify-between text-[var(--ink-faint)] text-xs font-semibold">
-            <span>Marks</span>
-            <CheckCircle className="w-3.5 h-3.5 text-violet-400" />
-          </div>
-          <div className="text-2xl font-black text-violet-300 font-mono mt-1">
-            {stats?.total_marks_earned || 0}
-          </div>
-          <div className="text-[10px] text-[var(--ink-faint)] font-mono mt-0.5">
-            Net score
-          </div>
-        </div>
-
-        {/* Active Mistakes in Registry */}
-        <div className="p-4 rounded-xl bg-[var(--surface)] border border-[var(--line)]">
-          <div className="flex items-center justify-between text-[var(--ink-faint)] text-xs font-semibold">
-            <span>Active Mistakes</span>
-            <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
-          </div>
-          <div className="text-2xl font-black text-amber-400 font-mono mt-1">
-            {stats?.active_mistakes_count || 0}
-          </div>
-          <div className="text-[10px] text-[var(--ink-faint)] font-mono mt-0.5">
-            Pending mastery
-          </div>
-        </div>
-      </div>
-
       <CoverageHeader />
 
+      {(stats?.active_mistakes_count ?? 0) > 0 && (
+        <Link
+          href="/quiz?review=mistakes"
+          className="flex items-center gap-2.5 rounded-[var(--radius-lg)] px-4 py-3 hover:opacity-80"
+          style={{ background: "var(--surface)",
+                   border: "var(--line-width) solid var(--line)" }}
+        >
+          <ShieldAlert className="h-4 w-4 shrink-0" style={{ color: "var(--ink)" }} />
+          <span className="min-w-0 flex-1 text-[13px]" style={{ color: "var(--ink-soft)" }}>
+            <strong style={{ color: "var(--ink)" }}>
+              {stats?.active_mistakes_count} question
+              {stats?.active_mistakes_count === 1 ? "" : "s"}
+            </strong>{" "}
+            answered wrong and not yet mastered.
+          </span>
+          <ArrowRight className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--ink-faint)" }} />
+        </Link>
+      )}
+
+
       <SubjectDrilldown />
+
+      <DeepPanels />
 
       <InsightsPanel />
     </div>
