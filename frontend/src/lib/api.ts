@@ -62,6 +62,9 @@ export interface QuizQuestion {
   id: number;
   subject_name: string;
   subject_slug: string;
+  /** Shown so a practice question states its full place in the syllabus:
+   *  subject -> chapter -> topic. */
+  chapter_name?: string | null;
   topic_name: string;
   topic_slug: string;
   question_type: "MCQ" | "MSQ" | "NAT";
@@ -72,6 +75,10 @@ export interface QuizQuestion {
   difficulty: string;
   source: string;
   is_pyq: boolean;
+  exam_year?: number | null;
+  /** Which sitting of that year, e.g. "Set 1". Null when the paper did
+   *  not record one, which is most of them. */
+  exam_set?: string | null;
 }
 
 export interface SubmitPayload {
@@ -831,5 +838,25 @@ export async function fetchConceptRollup(
 ): Promise<ConceptRollup> {
   const res = await fetch(`${API_BASE}/api/stats/concepts/${view}`);
   if (!res.ok) throw new Error("Could not load that view");
+  return res.json();
+}
+
+/** Write a solution for a question that has none.
+ *
+ *  Routed server-side to the fallback provider rather than Gemini: the
+ *  free Gemini key is the one the feed and assistant depend on, and
+ *  spending it on a mid-practice request would starve those.
+ */
+export async function generateSolution(
+  questionId: number,
+): Promise<{ explanation: string; solution_source: string; generated: boolean }> {
+  const res = await fetch(
+    `${API_BASE}/api/quiz/${questionId}/solution/generate`,
+    { method: "POST" },
+  );
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.detail ?? "Could not generate a solution");
+  }
   return res.json();
 }

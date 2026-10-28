@@ -72,6 +72,12 @@ class Question(Base):
     origin = Column(String(20), default="SEED", index=True)
     exam_year = Column(Integer, nullable=True, index=True)
 
+    #: Which sitting of that year, e.g. "Set 1" or "Forenoon". GATE runs
+    #: more than one session per year and the papers differ, so a PYQ is
+    #: only fully identified by year *and* set. Nullable: a textbook
+    #: question has no sitting, and most older papers did not record one.
+    exam_set = Column(String(40), nullable=True, index=True)
+
     provenance = Column(Text, default="")
     source_chunk_ids = Column(String(200), default="")
     review_status = Column(String(20), default="approved", index=True)

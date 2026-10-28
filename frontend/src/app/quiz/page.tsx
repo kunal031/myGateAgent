@@ -2,17 +2,19 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Play, Target, Plus, Loader2 } from "lucide-react";
+import { GraduationCap, Play, Target, Plus, Loader2 } from "lucide-react";
 
 import SessionHistory from "@/features/exam/SessionHistory";
 import PaperImporter from "@/features/papers/PaperImporter";
+import PracticeRunner from "@/features/exam/PracticeRunner";
 import { QuestionPaper, fetchPapers } from "@/lib/papers";
+import {
+  ExamPatterns, QuizQuestion, SubjectItem, fetchExamPatterns, fetchQuiz,
+  fetchSyllabus, startExam,
+} from "@/lib/api";
 
 /** Imports that have not finished, and can be reopened from the quiz page. */
 const UNFINISHED = new Set(["parsing", "preview", "saving"]);
-import {
-  ExamPatterns, SubjectItem, fetchExamPatterns, fetchSyllabus, startExam,
-} from "@/lib/api";
 
 const TYPES = [
   { value: "all", label: "All types" },
@@ -30,6 +32,8 @@ export default function QuizPage() {
   const [subject, setSubject] = useState("");
   const [topic, setTopic] = useState("all");
   const [type, setType] = useState("all");
+  /** Non-null while practising; the page renders the runner instead. */
+  const [practice, setPractice] = useState<QuizQuestion[] | null>(null);
   const [count, setCount] = useState(10);
   const [minutes, setMinutes] = useState(15);
   const [starting, setStarting] = useState(false);
@@ -124,6 +128,32 @@ export default function QuizPage() {
     [syllabus, subject],
   );
 
+  /** Practice: fetch questions and answer them one at a time, with the
+   *  result shown immediately. No session row and no clock -- those
+   *  belong to the quiz flow, which this sits beside rather than
+   *  replaces. */
+  const startPractice = async () => {
+    setStarting(true);
+    setError(null);
+    try {
+      const items = await fetchQuiz({
+        subject_slug: subject,
+        topic_slug: topic === "all" ? undefined : topic,
+        question_type: type === "all" ? undefined : type,
+        limit: count,
+      });
+      if (items.length === 0) {
+        setError("No questions matched those filters.");
+        return;
+      }
+      setPractice(items);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load questions.");
+    } finally {
+      setStarting(false);
+    }
+  };
+
   const launch = async () => {
     setStarting(true);
     setError(null);
@@ -150,6 +180,12 @@ export default function QuizPage() {
     color: "var(--ink)",
     boxShadow: active ? "var(--shadow-sm)" : "none",
   });
+
+  if (practice) {
+    return (
+      <PracticeRunner questions={practice} onExit={() => setPractice(null)} />
+    );
+  }
 
   return (
     <div className="space-y-5">
@@ -286,10 +322,25 @@ export default function QuizPage() {
           </div>
         </div>
 
+        <div className="flex flex-col gap-2 sm:flex-row">
+        <button
+          type="button"
+          onClick={startPractice}
+          disabled={starting || !subject || subjectQuestionCount === 0}
+          title="One question at a time, with the answer shown as you go"
+          className="flex min-h-12 w-full items-center justify-center gap-2 rounded-[var(--radius-pill)] text-sm font-extrabold disabled:opacity-50 sm:w-auto sm:px-7"
+          style={{ background: "var(--surface)", color: "var(--ink)",
+                   border: "var(--line-width) solid var(--line)" }}
+        >
+          <GraduationCap className="h-4 w-4" />
+          {starting ? "Loading…" : "Practice"}
+        </button>
+
         <button
           type="button"
           onClick={launch}
           disabled={starting || !subject || subjectQuestionCount === 0}
+          title="Answer everything, then submit once and review"
           className="flex min-h-12 w-full items-center justify-center gap-2 rounded-[var(--radius-pill)] text-sm font-extrabold disabled:opacity-50 sm:w-auto sm:px-8"
           style={{ background: "var(--accent)", color: "var(--ink)",
                    border: "var(--line-width) solid var(--line)",
@@ -298,6 +349,7 @@ export default function QuizPage() {
           <Play className="h-4 w-4" />
           {starting ? "Preparing questions..." : "Start quiz"}
         </button>
+        </div>
 
         {subject && subjectQuestionCount === 0 && (
           <p className="text-[11px] font-semibold"
