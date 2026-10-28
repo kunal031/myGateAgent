@@ -171,6 +171,9 @@ export default function PracticeRunner({
             }}
             value={answer}
             onChange={(v) => { if (!result) setAnswer(v); }}
+            // Only after answering: the whole point of practice is that
+            // the attempt comes first.
+            reveal={result?.correct_answer ?? null}
           />
         </div>
 

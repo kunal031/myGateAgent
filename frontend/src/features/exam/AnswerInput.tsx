@@ -9,10 +9,19 @@ interface Props {
   question: ExamQuestion;
   value: string;
   onChange: (value: string) => void;
+  /** The correct answer, once it may be shown.
+   *
+   *  Optional and absent by default, because the quiz and exam runners
+   *  share this component and revealing an answer mid-paper would turn
+   *  a test into a reading exercise. Only practice passes it, and only
+   *  after the question has been answered. */
+  reveal?: string | null;
 }
 
 /** Answer control for the question's type: single, multiple, or numeric. */
-export default function AnswerInput({ question, value, onChange }: Props) {
+export default function AnswerInput({
+  question, value, onChange, reveal = null,
+}: Props) {
   if (question.question_type === "NAT") {
     return (
       <div
@@ -61,8 +70,23 @@ export default function AnswerInput({ question, value, onChange }: Props) {
 
   return (
     <div className="grid gap-3 sm:grid-cols-2">
+      {/* Split on comma so an MSQ with several correct options marks
+          all of them, not just the first. */}
       {question.options?.map((option) => {
         const active = selected.includes(option.id);
+        const correctIds = reveal
+          ? reveal.split(",").map((x) => x.trim()).filter(Boolean)
+          : [];
+        const isCorrect = correctIds.includes(option.id);
+        // Chosen and wrong. An option the student did not pick is left
+        // neutral -- colouring every wrong option red turns the page
+        // into noise and hides which one they actually chose.
+        const isWrongPick = reveal !== null && active && !isCorrect;
+
+        const tint = isCorrect
+          ? "var(--ok, #10b981)"
+          : isWrongPick ? "var(--bad, #f43f5e)" : null;
+
         return (
           <button
             key={option.id}
@@ -71,8 +95,12 @@ export default function AnswerInput({ question, value, onChange }: Props) {
             aria-pressed={active}
             className="flex min-h-14 items-center gap-3 rounded-[var(--radius)] px-3 py-2.5 text-left text-sm transition-colors"
             style={{
-              background: active ? "var(--accent)" : "var(--surface)",
-              border: `${active ? "3px" : "var(--line-width)"} solid var(--line)`,
+              background: tint
+                ? `color-mix(in oklab, ${tint} 16%, var(--surface))`
+                : active ? "var(--accent)" : "var(--surface)",
+              border: `${active || tint ? "3px" : "var(--line-width)"} solid ${
+                tint ?? "var(--line)"
+              }`,
               color: "var(--ink)",
               boxShadow: active ? "var(--shadow-sm)" : "none",
             }}
@@ -90,6 +118,13 @@ export default function AnswerInput({ question, value, onChange }: Props) {
             <span className="min-w-0 flex-1">
               <MathText text={option.text} />
             </span>
+
+            {tint && (
+              <span className="shrink-0 text-[10px] font-extrabold uppercase tracking-wider"
+                    style={{ color: tint }}>
+                {isCorrect ? "Correct" : "Your answer"}
+              </span>
+            )}
           </button>
         );
       })}
