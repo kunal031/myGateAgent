@@ -121,6 +121,49 @@ def _node(*, level: str, node_id: int | None, name: str, slug: str,
     }
 
 
+def concept_state_counts(db: Session, user_id: int, view: str) -> dict:
+    """How many concepts in `view` sit under each node, keyed by level.
+
+    Returns {"subject": {id: n}, "chapter": {...}, "topic": {...}} so one
+    query feeds every level of the tree. The drill-down previously showed
+    none of this and a separate panel showed nothing else, which put the
+    same eleven subjects on screen twice.
+    """
+    statuses = VIEW_STATUSES.get(view)
+    if statuses is None:
+        raise ValueError(f"Unknown view {view!r}")
+
+    # Left join so untouched concepts count: an inner join would report
+    # only concepts already started, which is the opposite of a "to fix"
+    # list.
+    rows = (
+        db.query(
+            Concept.subject_id, Topic.chapter_id, Concept.topic_id,
+            ConceptProgress.status,
+        )
+        .select_from(Concept)
+        .join(Topic, Topic.id == Concept.topic_id)
+        .outerjoin(
+            ConceptProgress,
+            (ConceptProgress.concept_id == Concept.id)
+            & (ConceptProgress.user_id == user_id),
+        )
+        .all()
+    )
+
+    out: dict[str, dict[int, int]] = {
+        "subject": {}, "chapter": {}, "topic": {},
+    }
+    for subject_id, chapter_id, topic_id, status in rows:
+        if (status or ConceptStatus.NOT_STARTED) not in statuses:
+            continue
+        for level, key in (("subject", subject_id), ("chapter", chapter_id),
+                           ("topic", topic_id)):
+            if key is not None:
+                out[level][key] = out[level].get(key, 0) + 1
+    return out
+
+
 def subject_breakdown(db: Session, user_id: int) -> list[dict]:
     """Every subject, with attempts, accuracy and coverage."""
     attempted = dict(

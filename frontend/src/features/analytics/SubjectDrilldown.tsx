@@ -3,10 +3,11 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
   ChevronRight, CircleCheck, CircleDashed, CircleDot, Loader2,
+  RotateCcw, Sparkles, Wrench,
 } from "lucide-react";
 
 import {
-  BreakdownNode, fetchBreakdown, fetchBreakdownChildren,
+  BreakdownNode, ConceptView, fetchBreakdown, fetchBreakdownChildren,
 } from "@/lib/api";
 
 /**
@@ -24,6 +25,16 @@ import {
  * and reopening does not refetch -- a tree is explored by opening and
  * closing, and refetching every toggle makes it feel broken.
  */
+
+const VIEWS: { key: ConceptView; label: string; icon: typeof Wrench;
+               hint: string }[] = [
+  { key: "fix", label: "To fix", icon: Wrench,
+    hint: "Concepts untouched or still being learned" },
+  { key: "learned", label: "Learned", icon: Sparkles,
+    hint: "Concepts marked learned or better" },
+  { key: "revised", label: "Revised", icon: RotateCcw,
+    hint: "Concepts gone back over at least once" },
+];
 
 const ACCURACY_GOOD = 75;
 const ACCURACY_FAIR = 50;
@@ -112,6 +123,17 @@ function Metrics({ node }: { node: BreakdownNode }) {
                   ? "var(--ink-faint)" : "var(--ok, #10b981)",
               }} />
       )}
+
+      {/* Concepts in the selected state. Absent on a concept row, where
+          the node *is* the concept and a count would be meaningless. */}
+      {node.concepts_in_state !== undefined && !isConcept && (
+        <span className="w-7 shrink-0 text-right font-mono text-[11px] font-bold"
+              style={{ color: node.concepts_in_state > 0
+                ? "var(--ink-soft)" : "var(--ink-faint)" }}
+              title={`${node.concepts_in_state} concept(s) in this state`}>
+          {node.concepts_in_state}
+        </span>
+      )}
     </div>
   );
 }
@@ -125,7 +147,9 @@ function metaFor(node: BreakdownNode): string | undefined {
     : undefined;
 }
 
-function Node({ node, depth }: { node: BreakdownNode; depth: number }) {
+function Node({ node, depth, view }: {
+  node: BreakdownNode; depth: number; view: ConceptView;
+}) {
   const [open, setOpen] = useState(false);
   const [children, setChildren] = useState<BreakdownNode[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -137,14 +161,14 @@ function Node({ node, depth }: { node: BreakdownNode; depth: number }) {
     setOpen((wasOpen) => {
       if (!wasOpen && children === null && !loading) {
         setLoading(true);
-        fetchBreakdownChildren(node.level, node.id as number)
+        fetchBreakdownChildren(node.level, node.id as number, view)
           .then(setChildren)
           .catch(() => setChildren([]))
           .finally(() => setLoading(false));
       }
       return !wasOpen;
     });
-  }, [children, expandable, loading, node.id, node.level]);
+  }, [children, expandable, loading, node.id, node.level, view]);
 
   const meta = metaFor(node);
   const Tag = expandable ? "button" : "div";
@@ -203,7 +227,8 @@ function Node({ node, depth }: { node: BreakdownNode; depth: number }) {
         </p>
       ) : (
         children?.map((child) => (
-          <Node key={`${child.level}-${child.id}`} node={child} depth={depth + 1} />
+          <Node key={`${child.level}-${child.id}`} node={child}
+                depth={depth + 1} view={view} />
         ))
       ))}
     </>
@@ -213,15 +238,20 @@ function Node({ node, depth }: { node: BreakdownNode; depth: number }) {
 export default function SubjectDrilldown() {
   const [subjects, setSubjects] = useState<BreakdownNode[] | null>(null);
   const [error, setError] = useState("");
+  const [view, setView] = useState<ConceptView>("fix");
 
   useEffect(() => {
     let cancelled = false;
-    fetchBreakdown()
+    fetchBreakdown(view)
       .then((rows) => !cancelled && setSubjects(rows))
       .catch((err) => !cancelled
         && setError(err instanceof Error ? err.message : "Could not load"));
     return () => { cancelled = true; };
-  }, []);
+  }, [view]);
+
+  const total = subjects?.reduce(
+    (sum, s) => sum + (s.concepts_in_state ?? 0), 0,
+  ) ?? 0;
 
   return (
     <section className="overflow-hidden rounded-[var(--radius-lg)]"
@@ -229,12 +259,42 @@ export default function SubjectDrilldown() {
                background: "var(--surface)",
                border: "var(--line-width) solid var(--line)",
              }}>
-      <header className="flex items-baseline justify-between gap-2 px-3 py-2.5">
-        <h3 className="text-[13px] font-bold" style={{ color: "var(--ink)" }}>
-          Subject breakdown
-        </h3>
+      <header className="space-y-2 px-3 py-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="mr-auto text-[13px] font-bold"
+              style={{ color: "var(--ink)" }}>
+            Subject breakdown
+          </h3>
+
+          {/* The concept state used to be a second table listing the
+              same eleven subjects. It is a filter on this one now: the
+              rightmost column counts concepts in the chosen state, and
+              every other column is unaffected by it. */}
+          <div className="flex gap-1 rounded-[var(--radius-pill)] p-0.5"
+               style={{ background: "var(--surface-sunk)",
+                        border: "var(--line-width) solid var(--line)" }}>
+            {VIEWS.map(({ key, label, icon: Icon, hint }) => (
+              <button
+                key={key} type="button" title={hint}
+                onClick={() => setView(key)}
+                className="flex items-center gap-1 rounded-[var(--radius-pill)] px-2.5 py-1 text-[11px] font-bold"
+                style={view === key
+                  ? { background: "var(--accent)", color: "var(--ink)" }
+                  : { background: "transparent", color: "var(--ink-faint)" }}
+              >
+                <Icon className="h-3 w-3" />
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <p className="text-[10px]" style={{ color: "var(--ink-faint)" }}>
-          questions seen · accuracy · concepts in cards
+          seen/total · coverage · accuracy ·{" "}
+          <span style={{ color: "var(--ink-soft)" }}>
+            {total} concept{total === 1 ? "" : "s"} {VIEWS.find(
+              (v) => v.key === view)?.label.toLowerCase()}
+          </span>
         </p>
       </header>
 
@@ -252,7 +312,8 @@ export default function SubjectDrilldown() {
       )}
 
       {subjects?.map((subject) => (
-        <Node key={`subject-${subject.id}`} node={subject} depth={0} />
+        <Node key={`subject-${subject.id}`} node={subject} depth={0}
+              view={view} />
       ))}
     </section>
   );

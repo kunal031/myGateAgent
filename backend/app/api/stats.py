@@ -213,7 +213,8 @@ def insights(db: Session = Depends(get_db),
 # ----------------------------------------------------- hierarchy drill-down
 
 @router.get("/breakdown")
-def breakdown_subjects(db: Session = Depends(get_db),
+def breakdown_subjects(view: str = "fix",
+                       db: Session = Depends(get_db),
                        user: User = Depends(current_user)):
     """Every subject, heaviest first.
 
@@ -222,11 +223,21 @@ def breakdown_subjects(db: Session = Depends(get_db),
     and 282 concepts the student will not look at.
     """
     from ..services.analytics import breakdown as brk
-    return brk.subject_breakdown(db, user.id)
+
+    rows = brk.subject_breakdown(db, user.id)
+    # The concept count for the chosen state, so one table carries both
+    # what was attempted and what is left to learn.
+    try:
+        counts = brk.concept_state_counts(db, user.id, view)["subject"]
+    except ValueError:
+        counts = {}
+    for row in rows:
+        row["concepts_in_state"] = counts.get(row["id"], 0)
+    return rows
 
 
 @router.get("/breakdown/{level}/{node_id}")
-def breakdown_children(level: str, node_id: int,
+def breakdown_children(level: str, node_id: int, view: str = "fix",
                        db: Session = Depends(get_db),
                        user: User = Depends(current_user)):
     """The children of any node, at any level.
@@ -253,7 +264,18 @@ def breakdown_children(level: str, node_id: int,
             f"Cannot expand {level!r}. Expandable levels are: "
             "subject, chapter, topic.",
         )
-    return fetch(db, node_id, user.id)
+
+    rows = fetch(db, node_id, user.id)
+    child_level = {"subject": "chapter", "chapter": "topic",
+                   "topic": "concept"}[level]
+    if child_level != "concept":
+        try:
+            counts = brk.concept_state_counts(db, user.id, view)[child_level]
+        except ValueError:
+            counts = {}
+        for row in rows:
+            row["concepts_in_state"] = counts.get(row["id"], 0)
+    return rows
 
 
 # ------------------------------------------------------------- calendar

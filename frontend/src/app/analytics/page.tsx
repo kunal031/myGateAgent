@@ -3,7 +3,6 @@
 import React, { useEffect, useState } from "react";
 
 import DeepPanels from "@/features/analytics/DeepPanels";
-import ConceptRollupPanel from "@/features/analytics/ConceptRollupPanel";
 import SubjectDrilldown from "@/features/analytics/SubjectDrilldown";
 import InsightsPanel from "@/features/analytics/InsightsPanel";
 import {
@@ -54,8 +53,6 @@ export default function AnalyticsPage() {
           </div>
         </div>
       </div>
-
-      <ConceptRollupPanel />
 
       <DeepPanels />
 

@@ -781,10 +781,19 @@ export interface BreakdownNode {
   coverage: number;
   weight: number;
   status: string;
+  /** Concepts under this node in the selected state (fix/learned/revised).
+   *  Carried on the same row so one table answers both "how am I doing"
+   *  and "what is left", instead of two tables listing the same
+   *  subjects. */
+  concepts_in_state?: number;
 }
 
-export async function fetchBreakdown(): Promise<BreakdownNode[]> {
-  const res = await fetch(`${API_BASE}/api/stats/breakdown`);
+export type ConceptView = "fix" | "learned" | "revised";
+
+export async function fetchBreakdown(
+  view: ConceptView = "fix",
+): Promise<BreakdownNode[]> {
+  const res = await fetch(`${API_BASE}/api/stats/breakdown?view=${view}`);
   if (!res.ok) throw new Error("Could not load the subject breakdown");
   return res.json();
 }
@@ -792,9 +801,11 @@ export async function fetchBreakdown(): Promise<BreakdownNode[]> {
 /** The children of any node. Takes the level and id straight off the node
  *  being expanded, so the call is the same at every depth. */
 export async function fetchBreakdownChildren(
-  level: string, id: number,
+  level: string, id: number, view: ConceptView = "fix",
 ): Promise<BreakdownNode[]> {
-  const res = await fetch(`${API_BASE}/api/stats/breakdown/${level}/${id}`);
+  const res = await fetch(
+    `${API_BASE}/api/stats/breakdown/${level}/${id}?view=${view}`,
+  );
   if (!res.ok) throw new Error("Could not load that level");
   return res.json();
 }
