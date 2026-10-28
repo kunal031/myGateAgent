@@ -9,6 +9,8 @@ import {
   QuizQuestion, SubmitResponse, generateSolution, submitQuizAnswer,
 } from "@/lib/api";
 
+import MathText from "@/components/MathText";
+
 import AnswerInput from "./AnswerInput";
 
 /**
@@ -146,10 +148,12 @@ export default function PracticeRunner({
       <section className="rounded-[var(--radius-lg)] p-4"
                style={{ background: "var(--surface)",
                         border: "var(--line-width) solid var(--line)" }}>
-        <p className="whitespace-pre-wrap text-[14px] leading-relaxed"
-           style={{ color: "var(--ink)" }}>
-          {question.content}
-        </p>
+        {/* Through MathText, like every other surface: question stems
+            carry LaTeX ($f(n) = n^{\log_2 n}$) and rendering them raw
+            shows the markup instead of the maths. */}
+        <div className="text-[14px]" style={{ color: "var(--ink)" }}>
+          <MathText text={question.content} />
+        </div>
 
         {/* Locked once checked by refusing changes and dimming the
             control, rather than adding a `disabled` prop to AnswerInput
@@ -226,10 +230,10 @@ export default function PracticeRunner({
                     Solution
                     {result.explanation ? "" : " · generated"}
                   </p>
-                  <p className="whitespace-pre-wrap text-[13px] leading-relaxed"
-                     style={{ color: "var(--ink)" }}>
-                    {solution}
-                  </p>
+                  {/* Generated solutions come back with LaTeX too. */}
+                  <div className="text-[13px]" style={{ color: "var(--ink)" }}>
+                    <MathText text={solution} />
+                  </div>
                 </>
               ) : (
                 <>
