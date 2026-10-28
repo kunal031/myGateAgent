@@ -83,9 +83,13 @@ function Metrics({ node }: { node: BreakdownNode }) {
 
   const Icon = STATUS_ICON[node.status] ?? null;
 
+  // Every slot is always rendered, empty when it does not apply. A
+  // conditional column shifts every column to its left on the rows that
+  // lack it, so nothing lines up down the table -- which is what made
+  // concept rows look misaligned against the subjects above them.
   return (
     <div className="flex shrink-0 items-center gap-3 text-[11px]">
-      <span className="hidden font-mono sm:inline"
+      <span className="hidden w-[92px] text-right font-mono sm:inline"
             style={{ color: "var(--ink-faint)" }}
             title={isConcept
               ? `${done} of ${total} cards read`
@@ -95,48 +99,48 @@ function Metrics({ node }: { node: BreakdownNode }) {
         {node.repeats > 0 && (
           <span title={`${node.repeats} repeat attempt(s)`}> +{node.repeats}</span>
         )}
-        {isConcept && node.cards_mastered > 0 && (
-          <span title={`${node.cards_mastered} mastered`}>
-            {" "}&#9733;{node.cards_mastered}
-          </span>
-        )}
       </span>
 
-      <div className="hidden h-1 w-16 overflow-hidden rounded-full sm:block"
+      <div className="hidden h-1 w-16 shrink-0 overflow-hidden rounded-full sm:block"
            style={{ background: "var(--surface-sunk)" }}
            title={`${node.coverage}% covered`}>
         <div className="h-full" style={{
-          width: `${Math.min(node.coverage, 100)}%`,
+          // A floor of 2% when anything at all has been covered: at 1%
+          // the bar renders as nothing, which reads as "untouched" when
+          // it is not.
+          width: node.coverage > 0
+            ? `${Math.max(2, Math.min(node.coverage, 100))}%`
+            : "0%",
           background: "var(--ink-faint)",
         }} />
       </div>
 
-      <span className="w-12 text-right font-mono font-bold"
+      <span className="w-12 shrink-0 text-right font-mono font-bold"
             style={{ color: rightColour }}>
         {rightValue}
       </span>
 
-      {Icon && (
-        <Icon className="h-3.5 w-3.5 shrink-0"
-              style={{
-                color: node.status === "not_started"
-                  ? "var(--ink-faint)" : "var(--ok, #10b981)",
-              }} />
-      )}
+      <span className="flex w-4 shrink-0 justify-center">
+        {Icon && (
+          <Icon className="h-3.5 w-3.5"
+                style={{
+                  color: node.status === "not_started"
+                    ? "var(--ink-faint)" : "var(--ok, #10b981)",
+                }} />
+        )}
+      </span>
 
-      {/* Concepts in the selected state. Absent on a concept row, where
-          the node *is* the concept and a count would be meaningless. */}
-      {node.concepts_in_state !== undefined && !isConcept && (
-        <span className="w-7 shrink-0 text-right font-mono text-[11px] font-bold"
-              style={{ color: node.concepts_in_state > 0
-                ? "var(--ink-soft)" : "var(--ink-faint)" }}
-              title={`${node.concepts_in_state} concept(s) in this state`}>
-          {node.concepts_in_state}
-        </span>
-      )}
+      <span className="w-7 shrink-0 text-right font-mono font-bold"
+            style={{ color: (node.concepts_in_state ?? 0) > 0
+              ? "var(--ink-soft)" : "var(--ink-faint)" }}
+            title={isConcept ? undefined
+              : `${node.concepts_in_state ?? 0} concept(s) in this state`}>
+        {isConcept ? "" : node.concepts_in_state ?? 0}
+      </span>
     </div>
   );
 }
+
 
 /** What the row says beside its name, which differs by level. */
 function metaFor(node: BreakdownNode): string | undefined {
@@ -177,11 +181,18 @@ function Node({ node, depth, view }: {
     <>
       <Tag
         {...(expandable ? { type: "button" as const, onClick: toggle } : {})}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:opacity-80"
+        className={`flex w-full items-center gap-2 px-3 py-2 text-left hover:opacity-80 ${
+          depth === 0 && open ? "sticky top-0 z-10" : ""
+        }`}
         style={{
           paddingLeft: `${12 + depth * 16}px`,
           borderTop: "var(--line-width) solid var(--line)",
-          background: depth === 0 ? "transparent" : "var(--surface-sunk)",
+          // Opaque while sticky, or the rows scrolling beneath show
+          // through a transparent header.
+          background: depth === 0
+            ? (open ? "var(--surface)" : "transparent")
+            : "var(--surface-sunk)",
+          boxShadow: depth === 0 && open ? "var(--shadow-sm)" : "none",
         }}
       >
         {expandable ? (
@@ -290,13 +301,27 @@ export default function SubjectDrilldown() {
         </div>
 
         <p className="text-[10px]" style={{ color: "var(--ink-faint)" }}>
-          seen/total · coverage · accuracy ·{" "}
-          <span style={{ color: "var(--ink-soft)" }}>
-            {total} concept{total === 1 ? "" : "s"} {VIEWS.find(
-              (v) => v.key === view)?.label.toLowerCase()}
-          </span>
+          {total} concept{total === 1 ? "" : "s"}{" "}
+          {VIEWS.find((v) => v.key === view)?.label.toLowerCase()} across the
+          syllabus
         </p>
       </header>
+
+      {/* Column labels, aligned to the same fixed widths the rows use, so
+          each number says what it is instead of relying on the reader to
+          infer it from its position. */}
+      <div className="hidden items-center gap-3 px-3 pb-1.5 text-[9px] font-extrabold uppercase tracking-wider sm:flex"
+           style={{ color: "var(--ink-faint)" }}>
+        <span className="flex-1">Subject</span>
+        <span className="w-[92px] text-right">Seen</span>
+        <span className="w-16 text-center">Covered</span>
+        <span className="w-12 text-right">Accuracy</span>
+        <span className="w-4" />
+        <span className="w-7 text-right"
+              title="Concepts in the selected state">
+          {VIEWS.find((v) => v.key === view)?.label}
+        </span>
+      </div>
 
       {error && (
         <p className="px-3 py-3 text-[12px]" style={{ color: "var(--ink-faint)" }}>
