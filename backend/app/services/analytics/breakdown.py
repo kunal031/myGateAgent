@@ -40,7 +40,11 @@ logger = logging.getLogger(__name__)
 
 #: Below this, an accuracy figure is noise. Reported as None rather than a
 #: number, so the UI can say "not enough data" instead of implying 0%.
-MIN_FOR_ACCURACY = 3
+#:
+#: Raised from 3 after seeing the page: Engineering Mathematics
+#: rendered a flat "0%" from three attempts, which reads as a verdict
+#: on a 13-mark subject rather than as the absence of evidence it is.
+MIN_FOR_ACCURACY = 5
 
 
 def _accuracy(correct: int, total: int) -> float | None:

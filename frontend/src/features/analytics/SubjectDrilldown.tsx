@@ -71,9 +71,15 @@ function Metrics({ node }: { node: BreakdownNode }) {
   const done = isConcept ? node.cards_seen : node.covered;
   const total = isConcept ? node.cards : node.available;
 
+  // A dash where accuracy is withheld, with the sample size in the
+  // tooltip: "0%" from three attempts reads as a verdict on a subject
+  // when it is the absence of evidence.
+  const tooFewTried = !isConcept && node.accuracy === null && node.attempted > 0;
   const rightValue = isConcept
     ? (node.coverage > 0 ? `${node.coverage}%` : "—")
-    : (node.accuracy === null ? "—" : `${node.accuracy}%`);
+    : (node.accuracy === null
+        ? (tooFewTried ? `${node.attempted}·` : "—")
+        : `${node.accuracy}%`);
 
   const rightColour = isConcept
     ? (node.coverage >= 100 ? "var(--ok, #10b981)"
@@ -116,7 +122,10 @@ function Metrics({ node }: { node: BreakdownNode }) {
       </div>
 
       <span className="w-12 shrink-0 text-right font-mono font-bold"
-            style={{ color: rightColour }}>
+            style={{ color: rightColour }}
+            title={tooFewTried
+              ? `Only ${node.attempted} attempt(s) -- too few to judge`
+              : undefined}>
         {rightValue}
       </span>
 

@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 
+import CoverageHeader from "@/features/analytics/CoverageHeader";
 import DeepPanels from "@/features/analytics/DeepPanels";
 import SubjectDrilldown from "@/features/analytics/SubjectDrilldown";
 import InsightsPanel from "@/features/analytics/InsightsPanel";
@@ -114,6 +115,8 @@ export default function AnalyticsPage() {
           </div>
         </div>
       </div>
+
+      <CoverageHeader />
 
       <SubjectDrilldown />
 

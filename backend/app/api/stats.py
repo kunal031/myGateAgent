@@ -322,3 +322,19 @@ def concept_rollup(view: str,
     except ValueError as exc:
         raise HTTPException(
             404, f"{exc}. Views are: fix, learned, revised.") from exc
+
+
+@router.get("/coverage")
+def coverage(db: Session = Depends(get_db),
+             user: User = Depends(current_user)):
+    """How much of the syllabus has been touched, and what to open next.
+
+    One request for the top of the analytics page: accuracy on 1% of the
+    syllabus is not the headline, coverage is.
+    """
+    from ..services.analytics import performance as perf
+    return {
+        "coverage": perf.coverage(db, user.id),
+        "next_action": perf.next_action(db, user.id),
+        "readiness": perf.exam_readiness(db, user.id),
+    }

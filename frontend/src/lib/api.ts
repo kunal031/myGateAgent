@@ -871,3 +871,27 @@ export async function generateSolution(
   }
   return res.json();
 }
+
+// --------------------------------------------------------- coverage
+
+export interface CoverageSummary {
+  coverage: {
+    questions_seen: number; questions_total: number; questions_pct: number;
+    concepts_started: number; concepts_total: number; concepts_pct: number;
+    marks_touched: number; marks_total: number; marks_pct: number;
+    subjects_touched: number; subjects_total: number;
+  };
+  next_action: {
+    kind: string; title: string; detail: string; action: string; href: string;
+  } | null;
+  readiness: {
+    projected_marks: number; assessed_weight: number;
+    unassessed_weight: number; confidence: string;
+  };
+}
+
+export async function fetchCoverage(): Promise<CoverageSummary> {
+  const res = await fetch(`${API_BASE}/api/stats/coverage`);
+  if (!res.ok) throw new Error("Could not load coverage");
+  return res.json();
+}
