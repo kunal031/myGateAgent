@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowRight, Compass } from "lucide-react";
+import { ArrowRight, CalendarClock, Compass } from "lucide-react";
 
 import { CoverageSummary, fetchCoverage } from "@/lib/api";
 
@@ -84,6 +84,63 @@ export default function CoverageHeader() {
         <Bar label="Marks" done={c.marks_touched}
              total={c.marks_total} pct={c.marks_pct} unit="marks" />
       </div>
+
+      {/* The only forward-looking number on the page. Everything else is
+          cumulative, which answers "how am I doing" but never "am I ahead
+          or behind" -- the question a fixed exam date makes decisive. */}
+      {data.pace.configured && data.pace.days_left !== undefined && (
+        <div className="rounded-[var(--radius)] px-3 py-2.5"
+             style={{
+               background: "var(--surface-sunk)",
+               border: `var(--line-width) solid ${
+                 data.pace.on_track === false
+                   ? "var(--bad, #f43f5e)" : "var(--line)"
+               }`,
+             }}>
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <span className="flex items-center gap-1.5 text-[12px] font-bold"
+                  style={{ color: "var(--ink)" }}>
+              <CalendarClock className="h-3.5 w-3.5" />
+              {data.pace.days_left} days to the exam
+            </span>
+            <span className="font-mono text-[11px]"
+                  style={{ color: "var(--ink-faint)" }}>
+              {data.pace.exam_date}
+            </span>
+          </div>
+
+          {data.pace.on_track === null ? (
+            <p className="mt-1 text-[11px]" style={{ color: "var(--ink-soft)" }}>
+              Not enough study history yet to judge your pace. It needs
+              four separate days with progress recorded.
+            </p>
+          ) : (
+            <>
+              <p className="mt-1 text-[11px] leading-relaxed"
+                 style={{ color: "var(--ink-soft)" }}>
+                <strong style={{
+                  color: data.pace.on_track
+                    ? "var(--ok, #10b981)" : "var(--bad, #f43f5e)",
+                }}>
+                  {data.pace.on_track ? "On track" : "Behind"}
+                </strong>
+                {" — "}
+                {data.pace.current_rate} concepts a week, and{" "}
+                {data.pace.needed_rate} a week would finish the{" "}
+                {data.pace.concepts_remaining} left.
+              </p>
+              {data.pace.projected_by_exam !== null
+                && data.pace.projected_by_exam !== undefined && (
+                <p className="mt-0.5 font-mono text-[10px]"
+                   style={{ color: "var(--ink-faint)" }}>
+                  At this rate: {data.pace.projected_by_exam} of{" "}
+                  {data.pace.concepts_total} concepts by exam day.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {data.next_action && (
         <Link

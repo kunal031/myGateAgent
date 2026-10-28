@@ -888,6 +888,22 @@ export interface CoverageSummary {
     projected_marks: number; assessed_weight: number;
     unassessed_weight: number; confidence: string;
   };
+  pace: {
+    configured: boolean;
+    exam_date?: string;
+    days_left?: number;
+    weeks_left?: number;
+    concepts_done?: number;
+    concepts_total?: number;
+    concepts_remaining?: number;
+    current_rate?: number;
+    needed_rate?: number;
+    active_days?: number;
+    /** null when there is too little history to judge -- "behind" and
+     *  "cannot tell yet" are different messages. */
+    on_track?: boolean | null;
+    projected_by_exam?: number | null;
+  };
 }
 
 export async function fetchCoverage(): Promise<CoverageSummary> {

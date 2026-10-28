@@ -72,6 +72,12 @@ class Settings(BaseSettings):
     #: where the API and worker have separate /tmp.
     UPLOAD_BUCKET: str = ""
 
+    #: When the exam is. GATE 2027 runs 6-21 February 2027 (IIT Madras);
+    #: the branch-wise date is not published yet, so the first exam day
+    #: is the conservative target. Configurable because it slips, and a
+    #: pace calculation against a wrong date is worse than none.
+    EXAM_DATE: str = "2027-02-06"
+
     # ---- Fallback model ----
     #: A second provider used only when Gemini returns 429
     #: RESOURCE_EXHAUSTED. Any OpenAI-compatible endpoint works -- Groq,

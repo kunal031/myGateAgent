@@ -18,6 +18,8 @@ from datetime import datetime, timedelta
 from sqlalchemy import case, func, text
 from sqlalchemy.orm import Session
 
+from ...core.config import settings
+from ...models.activity import ActivityEvent, ActivityKind
 from ...models.concepts import Concept, ConceptProgress, ConceptStatus
 from ...models.exams import ExamItem, ExamSession
 from ...models.models import Attempt, MistakeRegistry, Question, Subject, Topic
@@ -584,3 +586,93 @@ def next_action(db: Session, user_id: int) -> dict | None:
             "href": f"/feed?subject={top['subject_slug']}",
         }
     return None
+
+
+#: Only count days with real study when measuring pace. Someone working
+#: 9-7 does not study daily, and dividing by calendar days would report
+#: a rate they never had and a deficit they cannot act on.
+PACE_WINDOW_DAYS = 28
+
+
+def pace_to_exam(db: Session, user_id: int) -> dict:
+    """Whether the current rate finishes the syllabus before the exam.
+
+    Everything else on the page is cumulative, which answers "how am I
+    doing" but never "am I ahead or behind". With a fixed date that is
+    the question that decides the outcome.
+
+    Measured on concepts rather than questions: the feed teaches
+    concepts, and finishing 282 of them is a closer proxy for covering
+    the syllabus than attempting 1,953 questions, many of which drill
+    the same idea.
+
+    Returns `on_track: None` when there is too little history to judge.
+    A projection from four days of data is a guess, and a confident wrong
+    one here would tell someone to relax or panic on no evidence.
+    """
+    from datetime import date as _date
+
+    try:
+        exam_day = _date.fromisoformat(settings.EXAM_DATE.strip())
+    except ValueError:
+        logger.warning("EXAM_DATE %r is not a date", settings.EXAM_DATE)
+        return {"configured": False}
+
+    today = datetime.utcnow().date()
+    days_left = (exam_day - today).days
+    weeks_left = max(days_left / 7, 0.1)
+
+    total_concepts = db.query(func.count(Concept.id)).scalar() or 0
+    done = (
+        db.query(func.count(ConceptProgress.id))
+        .filter(ConceptProgress.user_id == user_id,
+                ConceptProgress.status.in_((
+                    ConceptStatus.LEARNED, ConceptStatus.REVISED,
+                    ConceptStatus.MASTERED)))
+        .scalar() or 0
+    )
+    remaining = max(total_concepts - done, 0)
+
+    since = datetime.utcnow() - timedelta(days=PACE_WINDOW_DAYS)
+    recent = (
+        db.query(func.count(ActivityEvent.id))
+        .filter(ActivityEvent.user_id == user_id,
+                ActivityEvent.kind == ActivityKind.CONCEPT_PROGRESS,
+                ActivityEvent.created_at >= since)
+        .scalar() or 0
+    )
+    active_days = (
+        db.query(func.count(func.distinct(func.date(ActivityEvent.created_at))))
+        .filter(ActivityEvent.user_id == user_id,
+                ActivityEvent.created_at >= since)
+        .scalar() or 0
+    )
+
+    window_weeks = min(PACE_WINDOW_DAYS, max((today - since.date()).days, 1)) / 7
+    current_rate = round(recent / window_weeks, 1) if window_weeks else 0.0
+    needed_rate = round(remaining / weeks_left, 1)
+
+    # Four distinct study days is the floor for claiming a trend. Below
+    # it the rate is an artefact of which days happened to be sampled.
+    enough = active_days >= 4 and recent > 0
+    projected = int(current_rate * weeks_left) if enough else None
+
+    return {
+        "configured": True,
+        "exam_date": exam_day.isoformat(),
+        "days_left": days_left,
+        "weeks_left": round(weeks_left, 1),
+        "concepts_done": int(done),
+        "concepts_total": int(total_concepts),
+        "concepts_remaining": int(remaining),
+        "current_rate": current_rate,
+        "needed_rate": needed_rate,
+        "active_days": int(active_days),
+        # None rather than False when the evidence is thin: "behind" and
+        # "cannot tell yet" are different messages.
+        "on_track": (current_rate >= needed_rate) if enough else None,
+        "projected_by_exam": (
+            min(projected + int(done), total_concepts)
+            if projected is not None else None
+        ),
+    }

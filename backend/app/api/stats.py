@@ -337,4 +337,5 @@ def coverage(db: Session = Depends(get_db),
         "coverage": perf.coverage(db, user.id),
         "next_action": perf.next_action(db, user.id),
         "readiness": perf.exam_readiness(db, user.id),
+        "pace": perf.pace_to_exam(db, user.id),
     }
