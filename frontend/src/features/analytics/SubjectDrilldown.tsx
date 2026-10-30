@@ -36,6 +36,11 @@ const VIEWS: { key: ConceptView; label: string; icon: typeof Wrench;
     hint: "Concepts gone back over at least once" },
 ];
 
+//: The table's column widths, declared once. The header and every row
+//: use this, so a column cannot drift out of alignment by one of them
+//: being edited and the other not.
+const GRID = "1fr 92px 64px 48px 16px 28px";
+
 const ACCURACY_GOOD = 75;
 const ACCURACY_FAIR = 50;
 
@@ -94,20 +99,28 @@ function Metrics({ node }: { node: BreakdownNode }) {
   // lack it, so nothing lines up down the table -- which is what made
   // concept rows look misaligned against the subjects above them.
   return (
-    <div className="flex shrink-0 items-center gap-3 text-[11px]">
-      <span className="hidden w-[92px] text-right font-mono sm:inline"
+    <>
+      {/* No unit glued to the number: "1/1200Q" read as a single value
+          with a stray letter. The column header carries the unit, and a
+          concept row says "cards" because its denominator is different
+          from every row above it. */}
+      <span className="hidden text-right font-mono text-[11px] tabular-nums sm:inline"
             style={{ color: "var(--ink-faint)" }}
             title={isConcept
               ? `${done} of ${total} cards read`
               : `${done} of ${total} questions seen`}>
-        {done}/{total}
-        <span style={{ opacity: 0.7 }}>{isConcept ? " cards" : "Q"}</span>
+        <span style={{ color: done > 0 ? "var(--ink-soft)" : "inherit" }}>
+          {done}
+        </span>
+        <span style={{ opacity: 0.55 }}>{" / "}{total}</span>
+        {isConcept && <span style={{ opacity: 0.55 }}> cards</span>}
         {node.repeats > 0 && (
-          <span title={`${node.repeats} repeat attempt(s)`}> +{node.repeats}</span>
+          <span title={`${node.repeats} repeat attempt(s)`}
+                style={{ opacity: 0.55 }}> +{node.repeats}</span>
         )}
       </span>
 
-      <div className="hidden h-1 w-16 shrink-0 overflow-hidden rounded-full sm:block"
+      <div className="hidden h-1 self-center overflow-hidden rounded-full sm:block"
            style={{ background: "var(--surface-sunk)" }}
            title={`${node.coverage}% covered`}>
         <div className="h-full" style={{
@@ -121,7 +134,7 @@ function Metrics({ node }: { node: BreakdownNode }) {
         }} />
       </div>
 
-      <span className="w-12 shrink-0 text-right font-mono font-bold"
+      <span className="text-right font-mono text-[11px] font-bold tabular-nums"
             style={{ color: rightColour }}
             title={tooFewTried
               ? `Only ${node.attempted} attempt(s) -- too few to judge`
@@ -129,7 +142,7 @@ function Metrics({ node }: { node: BreakdownNode }) {
         {rightValue}
       </span>
 
-      <span className="flex w-4 shrink-0 justify-center">
+      <span className="flex items-center justify-center">
         {Icon && (
           <Icon className="h-3.5 w-3.5"
                 style={{
@@ -139,14 +152,14 @@ function Metrics({ node }: { node: BreakdownNode }) {
         )}
       </span>
 
-      <span className="w-7 shrink-0 text-right font-mono font-bold"
+      <span className="text-right font-mono text-[11px] font-bold tabular-nums"
             style={{ color: (node.concepts_in_state ?? 0) > 0
               ? "var(--ink-soft)" : "var(--ink-faint)" }}
             title={isConcept ? undefined
               : `${node.concepts_in_state ?? 0} concept(s) in this state`}>
         {isConcept ? "" : node.concepts_in_state ?? 0}
       </span>
-    </div>
+    </>
   );
 }
 
@@ -190,10 +203,11 @@ function Node({ node, depth, view }: {
     <>
       <Tag
         {...(expandable ? { type: "button" as const, onClick: toggle } : {})}
-        className={`flex w-full items-center gap-2 px-3 py-2 text-left hover:opacity-80 ${
+        className={`grid w-full items-center gap-3 px-3 py-2 text-left hover:opacity-80 ${
           depth === 0 && open ? "sticky top-0 z-10" : ""
         }`}
         style={{
+          gridTemplateColumns: GRID,
           paddingLeft: `${12 + depth * 16}px`,
           borderTop: "var(--line-width) solid var(--line)",
           // Opaque while sticky, or the rows scrolling beneath show
@@ -319,14 +333,16 @@ export default function SubjectDrilldown() {
       {/* Column labels, aligned to the same fixed widths the rows use, so
           each number says what it is instead of relying on the reader to
           infer it from its position. */}
-      <div className="hidden items-center gap-3 px-3 pb-1.5 text-[9px] font-extrabold uppercase tracking-wider sm:flex"
-           style={{ color: "var(--ink-faint)" }}>
-        <span className="flex-1">Subject</span>
-        <span className="w-[92px] text-right">Seen</span>
-        <span className="w-16 text-center">Covered</span>
-        <span className="w-12 text-right">Accuracy</span>
-        <span className="w-4" />
-        <span className="w-7 text-right"
+      <div className="hidden items-center gap-3 px-3 pb-1.5 text-[9px] font-extrabold uppercase tracking-wider sm:grid"
+           style={{ gridTemplateColumns: GRID, color: "var(--ink-faint)" }}>
+        <span>Subject</span>
+        <span className="text-right" title="Distinct questions attempted">
+          Questions
+        </span>
+        <span className="text-center">Covered</span>
+        <span className="text-right">Accuracy</span>
+        <span />
+        <span className="text-right"
               title="Concepts in the selected state">
           {VIEWS.find((v) => v.key === view)?.label}
         </span>

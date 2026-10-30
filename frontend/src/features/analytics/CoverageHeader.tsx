@@ -63,35 +63,45 @@ export default function CoverageHeader() {
   if (!data) return null;
   const c = data.coverage;
 
+  const card = {
+    background: "var(--surface)",
+    border: "var(--line-width) solid var(--line)",
+  };
+
   return (
-    <section className="space-y-3 rounded-[var(--radius-lg)] p-4"
-             style={{ background: "var(--surface)",
-                      border: "var(--line-width) solid var(--line)" }}>
-      <div className="flex items-baseline justify-between gap-2">
-        <h2 className="text-[13px] font-bold" style={{ color: "var(--ink)" }}>
-          Syllabus covered
-        </h2>
-        <p className="text-[11px]" style={{ color: "var(--ink-faint)" }}>
-          {c.subjects_touched} of {c.subjects_total} subjects started
-        </p>
+    /* One third coverage, two thirds what to do about it. They answer
+       different questions -- where you stand, and what to open next --
+       so sharing one card made the second easy to miss. */
+    <section className="grid gap-3 lg:grid-cols-3">
+      <div className="space-y-3 rounded-[var(--radius-lg)] p-4" style={card}>
+        <div>
+          <h2 className="text-[13px] font-bold" style={{ color: "var(--ink)" }}>
+            Syllabus covered
+          </h2>
+          <p className="text-[11px]" style={{ color: "var(--ink-faint)" }}>
+            {c.subjects_touched} of {c.subjects_total} subjects started
+          </p>
+        </div>
+
+        <div className="space-y-2.5">
+          <Bar label="Questions" done={c.questions_seen}
+               total={c.questions_total} pct={c.questions_pct} />
+          <Bar label="Concepts" done={c.concepts_started}
+               total={c.concepts_total} pct={c.concepts_pct} />
+          <Bar label="Marks" done={c.marks_touched}
+               total={c.marks_total} pct={c.marks_pct} unit="marks" />
+        </div>
       </div>
 
-      <div className="flex flex-wrap gap-4 sm:flex-nowrap">
-        <Bar label="Questions" done={c.questions_seen}
-             total={c.questions_total} pct={c.questions_pct} />
-        <Bar label="Concepts" done={c.concepts_started}
-             total={c.concepts_total} pct={c.concepts_pct} />
-        <Bar label="Marks" done={c.marks_touched}
-             total={c.marks_total} pct={c.marks_pct} unit="marks" />
-      </div>
+      <div className="space-y-3 lg:col-span-2">
 
       {/* The only forward-looking number on the page. Everything else is
           cumulative, which answers "how am I doing" but never "am I ahead
           or behind" -- the question a fixed exam date makes decisive. */}
       {data.pace.configured && data.pace.days_left !== undefined && (
-        <div className="rounded-[var(--radius)] px-3 py-2.5"
+        <div className="rounded-[var(--radius-lg)] p-4"
              style={{
-               background: "var(--surface-sunk)",
+               background: "var(--surface)",
                border: `var(--line-width) solid ${
                  data.pace.on_track === false
                    ? "var(--bad, #f43f5e)" : "var(--line)"
@@ -145,9 +155,8 @@ export default function CoverageHeader() {
       {data.next_action && (
         <Link
           href={data.next_action.href}
-          className="flex items-start gap-2.5 rounded-[var(--radius)] px-3 py-2.5 hover:opacity-80"
-          style={{ background: "var(--surface-sunk)",
-                   border: "var(--line-width) solid var(--line)" }}
+          className="flex items-start gap-2.5 rounded-[var(--radius-lg)] p-4 hover:opacity-80"
+          style={card}
         >
           <Compass className="mt-0.5 h-4 w-4 shrink-0"
                    style={{ color: "var(--ink)" }} />
@@ -169,6 +178,7 @@ export default function CoverageHeader() {
                       style={{ color: "var(--ink-faint)" }} />
         </Link>
       )}
+      </div>
     </section>
   );
 }

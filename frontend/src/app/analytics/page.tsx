@@ -37,20 +37,20 @@ export default function AnalyticsPage() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between pb-2 border-b border-[var(--line)]">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-[var(--accent)] border border-[var(--line)] flex items-center justify-center text-[var(--ink)]">
-            <BarChart3 className="w-4 h-4" />
-          </div>
-          <div>
-            <h1 className="text-xl font-black tracking-tight text-[var(--ink)] flex items-center gap-2">
-              Performance Analytics
-            </h1>
-          </div>
-        </div>
-      </div>
+    /* space-y-5 and no max-width, matching quiz and test: max-w-5xl
+       centred this inside a shell that already pads, leaving a band of
+       empty space beside the sidebar that no other page has. */
+    <div className="space-y-5">
+      <header className="flex items-center gap-2.5">
+        <span className="flex h-8 w-8 items-center justify-center rounded-[var(--radius)]"
+              style={{ background: "var(--accent)", color: "var(--ink)",
+                       border: "var(--line-width) solid var(--line)" }}>
+          <BarChart3 className="h-4 w-4" />
+        </span>
+        <h1 className="text-lg font-extrabold sm:text-xl" style={{ color: "var(--ink)" }}>
+          Analytics
+        </h1>
+      </header>
 
       <CoverageHeader />
 
