@@ -1,4 +1,4 @@
-/* GateMaster theme tokens.
+/* gate.ai theme tokens.
  *
  * Three themes share one token contract, so components never name a colour
  * directly -- they use var(--surface), var(--accent) and so on, and switching
@@ -8,7 +8,7 @@
  *           pastel accents. Default.
  * light   : the same structure on a neutral white canvas, for daylight and
  *           long reading sessions.
- * dark    : the original GateMaster palette, kept for night study.
+ * dark    : the original gate.ai palette, kept for night study.
  */
 
 :root,

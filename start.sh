@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# GateMaster Quickstart Runner (GATE CSE 2027)
+# gate.ai Quickstart Runner (GATE CSE 2027)
 
 echo "=============================================="
-echo " Starting GateMaster (GATE CSE 2027 Preparation)"
+echo " Starting gate.ai (GATE CSE 2027 Preparation)"
 echo " Target: 80+ Marks / AIR < 100"
 echo "=============================================="
 
@@ -22,7 +22,7 @@ FRONTEND_PID=$!
 
 cleanup() {
     echo ""
-    echo "Shutting down GateMaster servers..."
+    echo "Shutting down gate.ai servers..."
     kill $BACKEND_PID $FRONTEND_PID 2>/dev/null
     exit 0
 }
@@ -30,7 +30,7 @@ cleanup() {
 trap cleanup SIGINT SIGTERM
 
 echo ""
-echo "GateMaster is up and running!"
+echo "gate.ai is up and running!"
 echo "  • Frontend UI: http://localhost:3000"
 echo "  • Backend API: http://127.0.0.1:8000/docs"
 echo ""

@@ -1,4 +1,4 @@
-# GateMaster
+# gate.ai
 
 A retrieval-grounded study system for GATE CSE 2027, built for someone
 preparing around a 9–7 job. Every explanation it shows is traced to a page

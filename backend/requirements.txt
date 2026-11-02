@@ -1,4 +1,4 @@
-# GateMaster backend dependencies
+# gate.ai backend dependencies
 # Install:  ./venv/bin/pip install -r requirements.txt
 
 # ---- Web framework ----

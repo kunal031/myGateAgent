@@ -20,7 +20,7 @@ from .core.lifespan import lifespan
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    description="Backend API for GateMaster - GATE CSE 2027 Preparation Platform",
+    description="Backend API for gate.ai - GATE CSE 2027 Preparation Platform",
     lifespan=lifespan,
 )
 
@@ -84,7 +84,7 @@ app.include_router(profile.router)
 def health_check():
     return {
         "status": "ok",
-        "app": "GateMaster",
+        "app": "gate.ai",
         "version": settings.VERSION,
         "gemini_configured": settings.gemini_configured,
         # Reported because a cache that has quietly stopped working looks

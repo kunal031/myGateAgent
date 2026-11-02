@@ -15,13 +15,20 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    PROJECT_NAME: str = "GateMaster API"
+    PROJECT_NAME: str = "gate.ai API"
     VERSION: str = "1.0.0"
 
     # Explicit override. Leave empty to let the resolver below choose.
     DATABASE_URL: str = ""
 
     # Local Postgres, used for development.
+    #
+    # The database is still named "gatemaster" after the app's old name.
+    # Renaming it would mean a dump, a restore and a re-point for every
+    # existing deployment, so the product name changed and the identifier
+    # did not. The same applies to the Lambda function names, the S3
+    # bucket, the backup filenames and the theme storage key: an
+    # identifier someone's data already lives behind is not a label.
     POSTGRES_URL: str = "postgresql+psycopg://kunal@localhost/gatemaster"
 
     # Managed Postgres (Aiven). Set this to keep data in the cloud and to

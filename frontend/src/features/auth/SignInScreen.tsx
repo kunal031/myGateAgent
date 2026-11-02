@@ -77,7 +77,7 @@ export default function SignInScreen() {
       >
         <div className="mb-4">
           <h1 className="text-lg font-extrabold" style={{ color: "var(--ink)" }}>
-            GateMaster
+            gate.ai
           </h1>
           <p className="text-[12px] font-semibold" style={{ color: "var(--ink-faint)" }}>
             {mode === "in" ? "Sign in to continue" : "Create your account"}
