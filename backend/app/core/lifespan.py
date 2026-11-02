@@ -9,6 +9,7 @@ from fastapi import FastAPI
 
 from .config import settings
 from .init_db import init_database
+from .startup_checks import check_configuration
 
 
 def _ensure_directories() -> None:
@@ -24,6 +25,9 @@ def _ensure_directories() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Before anything else: a misconfigured deployment should fail here,
+    # loudly, rather than at the first sign-in attempt.
+    check_configuration()
     _ensure_directories()
     init_database()
 

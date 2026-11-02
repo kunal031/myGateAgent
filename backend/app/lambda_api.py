@@ -36,7 +36,14 @@ def _build():
     """Create the Mangum handler once per container."""
     from mangum import Mangum
 
+    from .core.startup_checks import check_configuration
     from .main import app
+
+    # Lambda runs with lifespan off, so the startup hook never fires.
+    # Checking here means a misconfigured function fails on its first
+    # invocation with a clear reason, instead of serving an app that
+    # cannot sign anyone in.
+    check_configuration()
 
     return Mangum(
         app,
