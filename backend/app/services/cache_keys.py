@@ -16,9 +16,11 @@ prefix deletion acceptable here.
 from ..core.cache import delete, delete_prefix, key
 
 #: Everything under this prefix belongs to one user.
+#: "feed" is deliberately absent: the feed itself is not cached. It
+#: reorders on every card seen, so a cached page would be wrong more
+#: often than right, and get_feed_page is already only ~26ms warm.
 _USER_PREFIXES = (
     "stats",   # summary, deep, insights, breakdown, coverage, calendar
-    "feed",    # a page of the feed, which is ordered by progress
     "profile", # the profile screen's own counters
 )
 
@@ -39,12 +41,3 @@ def invalidate_user(user_id: int) -> None:
         # The un-suffixed key, for a value with no further parameters.
         delete(key(kind, user_id))
 
-
-def invalidate_feed(user_id: int) -> None:
-    """Drop only this user's feed pages.
-
-    Separate from the full sweep because seeing a card reorders the feed
-    without changing any analytics, and that happens on every scroll.
-    """
-    delete_prefix(user_prefix("feed", user_id))
-    delete(key("feed", user_id))

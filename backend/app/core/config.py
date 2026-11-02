@@ -59,20 +59,30 @@ class Settings(BaseSettings):
 
     #: How stale each kind of value may be, in seconds.
     #:
-    #: The syllabus is effectively static -- it changes when a topic is
-    #: added by hand, which the write path invalidates anyway -- so it
-    #: gets a long one.
-    CACHE_TTL_SYLLABUS: int = 3600
-    #: Analytics are read far more often than the attempts behind them
-    #: change, and a minute-old accuracy figure is indistinguishable from
-    #: a current one to a reader. Recording an attempt invalidates them
-    #: regardless, so this is only the ceiling on how long a stale value
-    #: can survive if an invalidation is ever missed.
-    CACHE_TTL_STATS: int = 300
-    #: The feed reorders as cards are seen, so it is held briefly: long
-    #: enough to absorb a reload or a second tab, short enough that the
-    #: order still responds to what the student just did.
-    CACHE_TTL_FEED: int = 60
+    #: Every cached value is invalidated by the write that changes it, so
+    #: these are not the staleness a reader normally sees -- that is zero.
+    #: They are the backstop for an invalidation that was missed, which is
+    #: the failure this cache can actually have: a new analytics panel, or
+    #: a new write path, that nobody wired up. The TTL decides whether
+    #: that bug shows as a number which is wrong for a minute or wrong
+    #: until a restart.
+    #:
+    #: So they are set by blast radius, not by how often the data changes.
+
+    #: The syllabus is one shared entry, changed only by an admin adding a
+    #: topic, and that path deletes the key. A whole day is safe and makes
+    #: the hit rate essentially 1 -- but 6 hours, because the cost of
+    #: rebuilding it is now 1.9ms and buying more than that with staleness
+    #: is a bad trade.
+    CACHE_TTL_SYLLABUS: int = 21_600
+
+    #: Analytics. Five minutes was arbitrary; two is better. A missed
+    #: invalidation here shows the student a stale accuracy or coverage
+    #: figure right after they answered something, which is exactly the
+    #: moment they are looking for it to move -- and "my score didn't
+    #: update" is the kind of bug that makes someone distrust the whole
+    #: page. Recomputing costs 40-85ms, so the floor on this is low.
+    CACHE_TTL_STATS: int = 120
 
     # ---- Auth ----
     #: Signs every token. Empty means the app refuses to start, rather
