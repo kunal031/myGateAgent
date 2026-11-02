@@ -29,7 +29,8 @@ def get_quiz_questions(
     question_type: Optional[str] = None,
     difficulty: Optional[str] = None,
     limit: int = Query(default=10, le=50),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _user: User = Depends(current_user),
 ):
     # Explicit ON clauses: a bare .join(Subject).join(Topic) makes SQLAlchemy
     # join topics to subjects (via Subject.topics) instead of to questions,

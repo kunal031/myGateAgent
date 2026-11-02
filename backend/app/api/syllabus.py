@@ -1,16 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from ..core.auth import admin_user
+from ..core.auth import admin_user, current_user
 from ..core.database import get_db
 from ..models.models import Subject, Topic, Question
+from ..models.users import User
 from ..data.curriculum import sort_subjects, sort_topics
 from ..services.feed.tagging import slugify
 
 router = APIRouter(prefix="/api/syllabus", tags=["Syllabus"])
 
 @router.get("")
-def get_full_syllabus(db: Session = Depends(get_db)):
+def get_full_syllabus(db: Session = Depends(get_db),
+                      _user: User = Depends(current_user)):
     """The syllabus tree, in study order.
 
     Everything that lists subjects or topics for a human reads this -- the
