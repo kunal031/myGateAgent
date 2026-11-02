@@ -9,7 +9,12 @@
 
 beautifulsoup4==4.15.0      # parsing a fetched question page
 lxml==6.1.3                 # bs4's parser
-pymupdf==1.28.2             # PDF text extraction
+# 1.26.0, not 1.28.x: from 1.27 the only Linux wheels are
+# manylinux_2_28, and SAM's build image is manylinux2014 (glibc
+# 2.17) on both architectures. pip then compiles MuPDF from C++
+# source in the container and fails on '-std=c++20'. The local
+# requirements.txt keeps 1.28.2; this pin is only for Lambda.
+pymupdf==1.26.0             # PDF text extraction
 Pillow==12.1.0              # page rasterisation for vision OCR
 
 # Measured at 230 MB installed, against Lambda's 250 MB unzipped limit.
