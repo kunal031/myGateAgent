@@ -192,6 +192,40 @@ def _clean_tags(tags: list[str]) -> str:
     return ",".join(seen[:12])
 
 
+def _owned_card(card_id: int, db: Session, user_id: int) -> FeedCard:
+    """The card, if this user may change it.
+
+    A hand-written card belongs to one account: it is their own note, so
+    only they may read, edit or delete it. Generated cards carry no
+    user_id and are shared, but they are reproducible from their source --
+    editing one would make its citation a lie -- so they are refused here
+    too.
+
+    The owner check and the existence check deliberately return the same
+    404. Distinguishing them would let anyone enumerate which card ids
+    other accounts hold, which is the thing ownership is meant to prevent.
+    """
+    card = db.query(FeedCard).filter(FeedCard.id == card_id).first()
+    if card is None or card.source_type != "user" or card.user_id != user_id:
+        raise HTTPException(404, "No such card")
+    return card
+
+
+def _readable_card(card_id: int, db: Session, user_id: int) -> FeedCard:
+    """The card, if this user may see it.
+
+    Generated cards are shared by everyone. A hand-written one is private
+    to the account that wrote it, so another user's note is reported
+    missing rather than refused -- same reasoning as _owned_card.
+    """
+    card = db.query(FeedCard).filter(FeedCard.id == card_id).first()
+    if card is None:
+        raise HTTPException(404, "No such card")
+    if card.source_type == "user" and card.user_id != user_id:
+        raise HTTPException(404, "No such card")
+    return card
+
+
 def _card_response(card: FeedCard) -> dict:
     return {
         "id": card.id,
@@ -275,19 +309,15 @@ def create_card(payload: UserCardPayload, db: Session = Depends(get_db),
 
 @router.patch("/{card_id}")
 def update_card(card_id: int, payload: UserCardPayload,
-                db: Session = Depends(get_db)):
+                db: Session = Depends(get_db),
+                user: User = Depends(current_user)):
     """Edit a card the student wrote.
 
-    Generated cards are not editable here: they are reproducible from their
-    source, and silently diverging from it would make the citation a lie.
+    Scoped to the signed-in owner. Generated cards are not editable here:
+    they are reproducible from their source, and silently diverging from it
+    would make the citation a lie.
     """
-    card = db.query(FeedCard).filter(FeedCard.id == card_id).first()
-    if card is None:
-        raise HTTPException(404, "No such card")
-    if card.source_type != "user":
-        raise HTTPException(
-            403, "Only cards you wrote can be edited; this one is generated"
-        )
+    card = _owned_card(card_id, db, user.id)
 
     title = payload.title.strip()
     content = payload.content.strip()
@@ -307,15 +337,14 @@ def update_card(card_id: int, payload: UserCardPayload,
 
 
 @router.delete("/{card_id}", status_code=204)
-def delete_card(card_id: int, db: Session = Depends(get_db)):
-    """Remove a card the student wrote, and anything tracking it."""
-    card = db.query(FeedCard).filter(FeedCard.id == card_id).first()
-    if card is None:
-        raise HTTPException(404, "No such card")
-    if card.source_type != "user":
-        raise HTTPException(
-            403, "Only cards you wrote can be deleted; this one is generated"
-        )
+def delete_card(card_id: int, db: Session = Depends(get_db),
+                user: User = Depends(current_user)):
+    """Remove a card the student wrote, and anything tracking it.
+
+    Scoped to the signed-in owner, so one account cannot delete another's
+    notes.
+    """
+    card = _owned_card(card_id, db, user.id)
     # CardView has a foreign key to the card, so it goes first.
     db.query(CardView).filter(CardView.card_id == card_id).delete()
     db.delete(card)
@@ -330,13 +359,15 @@ class TagInput(BaseModel):
 
 
 @router.get("/{card_id}/metadata")
-def card_metadata_endpoint(card_id: int, db: Session = Depends(get_db)):
+def card_metadata_endpoint(card_id: int, db: Session = Depends(get_db),
+                           user: User = Depends(current_user)):
     """Ancestry and typed tags for a hover popover.
 
     Separate from the feed payload rather than inlined: tags are needed on
     mouse-over for one card, while the feed returns thirty at a time, and
     joining them into every page would pay for the 29 never hovered.
     """
+    _readable_card(card_id, db, user.id)
     data = card_metadata(db, card_id)
     if data is None:
         raise HTTPException(404, "No such card")
@@ -348,25 +379,28 @@ def related_cards_endpoint(
     card_id: int,
     limit: int = Query(default=8, ge=1, le=30),
     db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ):
     """Cards reachable from this one through shared tags."""
-    if db.query(FeedCard.id).filter(FeedCard.id == card_id).first() is None:
-        raise HTTPException(404, "No such card")
+    _readable_card(card_id, db, user.id)
     return {"items": related_cards(db, card_id, limit=limit)}
 
 
 @router.put("/{card_id}/tags")
 def set_tags_endpoint(
     card_id: int, tags: list[TagInput], db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ):
     """Replace a card's tags.
 
     PUT rather than POST: the client sends the list it wants and does not
     diff against what is stored, so a retry cannot double-apply.
+
+    Readable rather than owned: tagging a shared generated card is how the
+    vocabulary grows, and unlike its text, a tag does not contradict the
+    card's source. Another account's private note is still invisible.
     """
-    card = db.query(FeedCard).filter(FeedCard.id == card_id).first()
-    if card is None:
-        raise HTTPException(404, "No such card")
+    card = _readable_card(card_id, db, user.id)
 
     set_card_tags(
         db, card,
@@ -383,6 +417,7 @@ def browse_tags(
     q: str | None = None,
     limit: int = Query(default=50, ge=1, le=200),
     db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ):
     """The tag vocabulary, for autocomplete and the tag browser.
 
