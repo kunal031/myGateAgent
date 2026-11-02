@@ -6,11 +6,13 @@
 # should not hold: rate-limit budgets shared across containers, per-user
 # quotas, and a cache for repeated assistant questions.
 #
-# The api container is deliberately not yet replicated. Three pieces of
-# state still live on its local disk -- the rate-limit counter, the OCR
-# cache and the query-embedding cache -- and two copies would each believe
-# they owned the whole API budget. The volume below is the seam where that
-# gets fixed; until then this runs one api and scales the worker instead.
+# The api container is still run as one copy, but for fewer reasons than
+# before. The rate-limit counter now lives in Redis (atomic INCR, shared
+# by every instance), so replicas no longer each claim the whole daily
+# API budget. What remains on local disk is the OCR cache and the
+# query-embedding cache: both are caches, so a second replica would
+# recompute rather than corrupt, but they want object storage before
+# this is scaled out properly.
 
 services:
   postgres:
@@ -45,7 +47,19 @@ services:
     image: redis:8-alpine
     # appendonly so a restart does not lose today's quota counters and
     # let a user start the day over.
-    command: ["redis-server", "--appendonly", "yes"]
+    #
+    # maxmemory with allkeys-lru so cached analytics and feed pages are
+    # evicted under pressure rather than the server refusing writes --
+    # which would turn a full cache into failing quota claims. Everything
+    # stored here is either derived or expires daily.
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - "256mb"
+      - --maxmemory-policy
+      - allkeys-lru
     volumes:
       - redisdata:/data
     healthcheck:

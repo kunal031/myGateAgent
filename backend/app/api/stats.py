@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from ..core.auth import current_user
+from ..core.cache import get_or_set, key
+from ..core.config import settings
 from ..core.database import get_db
 from ..models.models import Attempt, MistakeRegistry, Subject, Topic, Question
 from ..models.users import User
@@ -84,17 +86,21 @@ def deep_analytics(db: Session = Depends(get_db),
     """
     from ..services.analytics import performance as perf
 
-    return {
-        "by_question_type": perf.accuracy_by_question_type(db, user.id),
-        "pace": perf.pace(db, user.id),
-        "trend": perf.trend(db, user.id),
-        "daily_activity": perf.daily_activity(db, user.id),
-        "weak_topics": perf.weak_topics(db, user.id),
-        "distractors": perf.distractor_analysis(db, user.id),
-        "readiness": perf.exam_readiness(db, user.id),
-        "retention": perf.retention(db, user.id),
-        "exam_behaviour": perf.exam_behaviour(db, user.id),
-    }
+    def build():
+        return {
+            "by_question_type": perf.accuracy_by_question_type(db, user.id),
+            "pace": perf.pace(db, user.id),
+            "trend": perf.trend(db, user.id),
+            "daily_activity": perf.daily_activity(db, user.id),
+            "weak_topics": perf.weak_topics(db, user.id),
+            "distractors": perf.distractor_analysis(db, user.id),
+            "readiness": perf.exam_readiness(db, user.id),
+            "retention": perf.retention(db, user.id),
+            "exam_behaviour": perf.exam_behaviour(db, user.id),
+        }
+
+    return get_or_set(key("stats", user.id, "deep"), build,
+                      ttl=settings.CACHE_TTL_STATS)
 
 
 @router.get("/insights")
@@ -333,9 +339,14 @@ def coverage(db: Session = Depends(get_db),
     syllabus is not the headline, coverage is.
     """
     from ..services.analytics import performance as perf
-    return {
-        "coverage": perf.coverage(db, user.id),
-        "next_action": perf.next_action(db, user.id),
-        "readiness": perf.exam_readiness(db, user.id),
-        "pace": perf.pace_to_exam(db, user.id),
-    }
+
+    def build():
+        return {
+            "coverage": perf.coverage(db, user.id),
+            "next_action": perf.next_action(db, user.id),
+            "readiness": perf.exam_readiness(db, user.id),
+            "pace": perf.pace_to_exam(db, user.id),
+        }
+
+    return get_or_set(key("stats", user.id, "coverage"), build,
+                      ttl=settings.CACHE_TTL_STATS)

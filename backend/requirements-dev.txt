@@ -1,0 +1,9 @@
+# Test-only dependencies. Kept out of requirements.txt so the runtime
+# image does not carry pytest.
+#
+#   ./venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+#   ./venv/bin/pytest
+
+-r requirements.txt
+
+pytest==8.4.2
