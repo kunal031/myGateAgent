@@ -338,14 +338,23 @@ Resources:
       Timeout: 30
       Environment:
         Variables:
-          PROTECTED_FUNCTION_NAME: !Ref ApiFunction
+          # Built from the same !Sub pattern ApiFunction's FunctionName
+          # uses, deliberately NOT !Ref ApiFunction. A reference here
+          # creates a cycle: the kill switch depends on the API, the
+          # API's stage carries the alarms, and the alarms publish to the
+          # topic this function subscribes to. CloudFormation refuses the
+          # whole changeset with "Circular dependency between resources".
+          PROTECTED_FUNCTION_NAME: !Sub "gatemaster-api-${Stage}"
       Policies:
         # Exactly one action on exactly one function. A broader policy
         # here would let an alarm disable anything in the account.
         - Statement:
             - Effect: Allow
               Action: lambda:PutFunctionConcurrency
-              Resource: !GetAtt ApiFunction.Arn
+              # Constructed rather than !GetAtt, for the same reason as
+              # PROTECTED_FUNCTION_NAME above. Still one function, not a
+              # wildcard across the account.
+              Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:gatemaster-api-${Stage}"
       Events:
         Alarm:
           Type: SNS
@@ -389,7 +398,11 @@ Resources:
       MetricName: Invocations
       Dimensions:
         - Name: FunctionName
-          Value: !Ref ApiFunction
+          # The name, not !Ref: an alarm that references ApiFunction
+          # joins the cycle described on PROTECTED_FUNCTION_NAME, because
+          # these alarms publish to the topic the kill switch subscribes
+          # to. The dimension only needs the function's name.
+          Value: !Sub "gatemaster-api-${Stage}"
       Statistic: Sum
       Period: 300
       EvaluationPeriods: 1
@@ -418,7 +431,11 @@ Resources:
       MetricName: Invocations
       Dimensions:
         - Name: FunctionName
-          Value: !Ref ApiFunction
+          # The name, not !Ref: an alarm that references ApiFunction
+          # joins the cycle described on PROTECTED_FUNCTION_NAME, because
+          # these alarms publish to the topic the kill switch subscribes
+          # to. The dimension only needs the function's name.
+          Value: !Sub "gatemaster-api-${Stage}"
       Statistic: Sum
       # 30 days in seconds. The longest period CloudWatch accepts is
       # 86,400, so this is 30 one-day periods summed instead.
@@ -445,7 +462,11 @@ Resources:
       MetricName: Throttles
       Dimensions:
         - Name: FunctionName
-          Value: !Ref ApiFunction
+          # The name, not !Ref: an alarm that references ApiFunction
+          # joins the cycle described on PROTECTED_FUNCTION_NAME, because
+          # these alarms publish to the topic the kill switch subscribes
+          # to. The dimension only needs the function's name.
+          Value: !Sub "gatemaster-api-${Stage}"
       Statistic: Sum
       Period: 300
       EvaluationPeriods: 1
