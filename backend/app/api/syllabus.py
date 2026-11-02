@@ -1,7 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ..core.auth import admin_user, current_user
+from ..core.cache import delete, get_or_set, key
+from ..core.config import settings
 from ..core.database import get_db
 from ..models.models import Subject, Topic, Question
 from ..models.users import User
@@ -21,13 +24,41 @@ def get_full_syllabus(db: Session = Depends(get_db),
     insertion order, which for several subjects ran close to backwards:
     Digital Logic opened on Boolean Algebra rather than Number Systems.
     """
+    return get_or_set(
+        SYLLABUS_KEY,
+        lambda: _build_syllabus(db),
+        ttl=settings.CACHE_TTL_SYLLABUS,
+    )
+
+
+#: One shared entry: the tree is identical for every account, so caching
+#: it per user would multiply the memory and the misses for no benefit.
+SYLLABUS_KEY = key("syllabus")
+
+
+def _build_syllabus(db: Session) -> list[dict]:
+    """Read the tree from the database.
+
+    One query per table rather than per subject. This was 1 + 2N -- a
+    topics query and a count query for each of the 11 subjects -- which
+    is why it was the endpoint that degraded worst under concurrency.
+    """
     subjects = sort_subjects(db.query(Subject).all())
+
+    topics_by_subject: dict[int, list[Topic]] = {}
+    for topic in db.query(Topic).all():
+        topics_by_subject.setdefault(topic.subject_id, []).append(topic)
+
+    counts = dict(
+        db.query(Question.subject_id, func.count(Question.id))
+        .group_by(Question.subject_id)
+        .all()
+    )
+
     result = []
     for s in subjects:
-        topics = sort_topics(
-            s.slug, db.query(Topic).filter(Topic.subject_id == s.id).all(),
-        )
-        q_count = db.query(Question).filter(Question.subject_id == s.id).count()
+        topics = sort_topics(s.slug, topics_by_subject.get(s.id, []))
+        q_count = counts.get(s.id, 0)
         result.append({
             "id": s.id,
             "name": s.name,
@@ -98,6 +129,13 @@ def create_topic(payload: TopicInput, db: Session = Depends(get_db),
     db.add(topic)
     db.commit()
     db.refresh(topic)
+
+    # The cached tree no longer lists every topic. Dropped rather than
+    # left to expire: the caller's next read is the paper importer looking
+    # for the topic it just created, and an hour-stale tree would not
+    # contain it.
+    delete(SYLLABUS_KEY)
+
     return {
         "id": topic.id, "name": topic.name, "slug": topic.slug,
         "importance": topic.importance, "created": True,
