@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
@@ -21,6 +21,7 @@ from ..core.security import (
     create_refresh_token, decode_token, hash_password, verify_password,
 )
 from ..models.users import User, UserRole
+from ..services import auth_sessions
 
 logger = logging.getLogger(__name__)
 
@@ -42,13 +43,16 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
-def _tokens(user: User) -> dict:
-    return {
-        "access_token": create_access_token(user.id, user.role),
-        "refresh_token": create_refresh_token(user.id, user.token_version),
-        "token_type": "bearer",
-        "expires_in": ACCESS_TOKEN_MINUTES * 60,
-    }
+def _tokens(db: Session, user: User, request: Request | None = None) -> dict:
+    """Start a session and return its token pair.
+
+    Goes through auth_sessions rather than minting directly, so every
+    refresh token issued anywhere is recorded and can be rotated. A token
+    handed out without a row would silently bypass reuse detection.
+    """
+    agent = request.headers.get("user-agent") if request is not None else None
+    issued = auth_sessions.issue(db, user, user_agent=agent)
+    return {**issued, "expires_in": ACCESS_TOKEN_MINUTES * 60}
 
 
 def _public(user: User) -> dict:
@@ -65,7 +69,8 @@ def _public(user: User) -> dict:
 
 
 @router.post("/register", status_code=201)
-def register(payload: RegisterRequest, db: Session = Depends(get_db)):
+def register(payload: RegisterRequest, request: Request,
+             db: Session = Depends(get_db)):
     """Create an account.
 
     Password registration is closed once an account exists. New accounts
@@ -114,11 +119,12 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     db.refresh(user)
 
     logger.info("Registered %s as %s", email, user.role)
-    return {"user": _public(user), **_tokens(user)}
+    return {"user": _public(user), **_tokens(db, user, request)}
 
 
 @router.post("/login")
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
+def login(payload: LoginRequest, request: Request,
+          db: Session = Depends(get_db)):
     """Exchange an email and password for tokens."""
     if not settings.auth_configured:
         raise HTTPException(503, "Authentication is not configured on this server")
@@ -143,15 +149,22 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
 
     user.last_login_at = datetime.utcnow()
     db.commit()
-    return {"user": _public(user), **_tokens(user)}
+    return {"user": _public(user), **_tokens(db, user, request)}
 
 
 @router.post("/refresh")
-def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
-    """Trade a refresh token for a new access token.
+def refresh(payload: RefreshRequest, request: Request,
+            db: Session = Depends(get_db)):
+    """Trade a refresh token for a new access token, and rotate it.
 
-    The token's version must still match the account's. That is what makes
-    "sign out everywhere" work without a blacklist to store and sweep.
+    Three checks, cheapest first: the signature, then the account's
+    token_version (which is what makes "sign out everywhere" work without
+    a blacklist), then the token's own row.
+
+    The response carries a *new* refresh token and the presented one stops
+    working. A client that replays a retired token is telling us two
+    parties hold it, so that whole device family is revoked -- see
+    services/auth_sessions for why that is the useful signal.
     """
     try:
         claims = decode_token(payload.refresh_token, expect="refresh")
@@ -164,19 +177,38 @@ def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
     if claims.get("ver") != user.token_version:
         raise HTTPException(401, "That session was signed out")
 
-    return {"user": _public(user), **_tokens(user)}
+    try:
+        rotated = auth_sessions.rotate(
+            db, user, payload.refresh_token,
+            user_agent=request.headers.get("user-agent"),
+        )
+    except auth_sessions.ReuseDetected as exc:
+        # Deliberately the same 401 a expired token gets: telling a
+        # caller "you replayed a token" confirms it was once valid.
+        raise HTTPException(401, str(exc)) from exc
+
+    return {
+        "user": _public(user),
+        **rotated,
+        "expires_in": ACCESS_TOKEN_MINUTES * 60,
+    }
 
 
 @router.post("/logout", status_code=204)
 def logout(user: User = Depends(current_user), db: Session = Depends(get_db)):
     """Sign out of every device.
 
-    Bumping the version invalidates all refresh tokens at once. Access
-    tokens already issued stay valid until they expire, which is the
-    trade-off that keeps authorisation free of a database read.
+    Both halves matter. Bumping token_version invalidates every refresh
+    token at once without a blacklist to sweep; revoking the session rows
+    means a later replay of one is reported as a dead session rather than
+    being mistaken for a theft and logged as one.
+
+    Access tokens already issued stay valid until they expire, which is
+    the trade-off that keeps authorisation free of a database read.
     """
     user.token_version = (user.token_version or 0) + 1
     db.commit()
+    auth_sessions.revoke_all(db, user.id, reason="signed_out")
 
 
 @router.get("/me")
@@ -271,6 +303,7 @@ def _failure_redirect(message: str) -> RedirectResponse:
 
 @router.get("/google/callback")
 def google_callback(
+    request: Request,
     db: Session = Depends(get_db),
     code: str = Query(default=""),
     state: str = Query(default=""),
@@ -313,7 +346,7 @@ def google_callback(
     if not user.is_active:
         return _failure_redirect("That account has been disabled")
 
-    tokens = _tokens(user)
+    tokens = _tokens(db, user, request)
     fragment = urlencode({
         "access_token": tokens["access_token"],
         "refresh_token": tokens["refresh_token"],

@@ -89,9 +89,20 @@ def create_access_token(user_id: int, role: str) -> str:
     )
 
 
-def create_refresh_token(user_id: int, token_version: int) -> str:
+def create_refresh_token(
+    user_id: int, token_version: int, *, nonce: str | None = None,
+) -> str:
+    """A refresh token, optionally carrying a uniqueness nonce.
+
+    The nonce makes two tokens issued to the same user in the same second
+    differ. Rotation stores each token's hash under a unique index, and
+    without it those two would hash identically and collide.
+    """
+    claims: dict = {"sub": str(user_id), "ver": token_version}
+    if nonce:
+        claims["jti"] = nonce
     return _encode(
-        {"sub": str(user_id), "ver": token_version},
+        claims,
         expires=timedelta(days=REFRESH_TOKEN_DAYS),
         kind="refresh",
     )
