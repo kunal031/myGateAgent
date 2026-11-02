@@ -8,6 +8,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..core.auth import current_user
+from ..services.cache_keys import invalidate_user
 from ..core.database import get_db
 from ..models.concepts import Concept
 from ..models.models import FeedCard, Subject, Topic
@@ -98,6 +99,9 @@ def mark_seen(card_id: int, db: Session = Depends(get_db),
     # unrecoverable and the calendar shows it as empty.
     activity.record_card_view(db, user_id=user.id, card=card)
     db.commit()
+
+    # Seeing a card feeds the retention panel, which /api/stats/deep caches.
+    invalidate_user(user.id)
     return {"card_id": card_id, "seen_count": view.seen_count}
 
 
@@ -118,6 +122,9 @@ def mark_recalled(card_id: int, db: Session = Depends(get_db),
     state = record_card_recalled(db, card, user_id=user.id)
     activity.record_card_review(db, user_id=user.id, card=card, recalled=True)
     db.commit()
+
+    # A recall changes retention and mastery counts in the cached analytics.
+    invalidate_user(user.id)
     return {
         "card_id": card_id,
         "recall_count": view.recall_count,
@@ -558,6 +565,10 @@ def mark_concept_progress(concept_id: int, payload: ConceptMark,
         db, user_id=user.id, concept=concept, status=state.status,
     )
     db.commit()
+
+    # Learning a concept moves coverage, readiness and the feed's own
+    # progress header -- all of which read from the cached analytics.
+    invalidate_user(user.id)
 
     return {
         "concept_id": concept_id,
