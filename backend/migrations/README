@@ -1,0 +1,58 @@
+Schema migrations
+=================
+
+Run from the backend directory; the config path is explicit because
+alembic.ini lives here rather than at the repository root:
+
+    alembic -c alembic.ini current          # where this database is
+    alembic -c alembic.ini upgrade head     # apply everything pending
+    alembic -c alembic.ini downgrade -1     # step back one revision
+
+The DSN is not in alembic.ini. env.py takes it from app.core.config, so
+DB_TARGET, DATABASE_URL and the Aiven/Neon URIs select the database here
+exactly as they do at runtime. Two URLs would be two sources of truth,
+and the failure is migrating one database while the app reads another.
+
+
+Adopting an existing database
+-----------------------------
+
+    alembic -c alembic.ini stamp head
+
+The first revision is deliberately empty. The schema predates Alembic --
+it was built by create_all -- so the baseline records where that schema
+got to rather than recreating it.
+
+
+Autogenerate: read the diff before trusting it
+----------------------------------------------
+
+    alembic -c alembic.ini revision --autogenerate -m "what changed"
+
+Always open the generated file. Autogenerate compares the models against
+the database, and several objects here exist only in the database:
+
+  - ix_chunk_embedding_hnsw   HNSW index behind vector search
+  - ix_chunk_content_fts      GIN index behind keyword search
+  - composite foreign keys    (topic_id, subject_id) and similar, which
+                              keep a question's topic inside its subject
+
+Autogenerate does not know they are intentional and will emit DROP for
+each one. Run against the current models it produced 33 of them. Such a
+migration applies cleanly, reports success, and leaves semantic search
+quietly broken -- delete those lines before committing.
+
+Check for them specifically:
+
+    grep -nE "drop_index|drop_constraint|drop_table|drop_column" \
+      migrations/versions/<new_file>.py
+
+
+create_all still runs at startup
+--------------------------------
+
+init_database() creates any missing tables, which is what makes a fresh
+clone work with no migration step. It does not add columns to tables that
+already exist, so it cannot bring an older database up to date -- that is
+what these migrations are for. A new database is created by create_all
+and then stamped; an existing one is upgraded.
