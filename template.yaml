@@ -338,12 +338,18 @@ Resources:
       Timeout: 30
       Environment:
         Variables:
-          # Built from the same !Sub pattern ApiFunction's FunctionName
-          # uses, deliberately NOT !Ref ApiFunction. A reference here
-          # creates a cycle: the kill switch depends on the API, the
-          # API's stage carries the alarms, and the alarms publish to the
-          # topic this function subscribes to. CloudFormation refuses the
-          # whole changeset with "Circular dependency between resources".
+          # Names built with !Sub rather than !Ref or !GetAtt, and
+          # UPLOAD_BUCKET overridden to empty, both to keep this function
+          # out of a dependency cycle.
+          #
+          # Globals gives every function UPLOAD_BUCKET: !Ref UploadBucket,
+          # which made the kill switch depend on the bucket. The API also
+          # depends on the bucket, the API's stage carries the alarms, and
+          # the alarms publish to the topic this function subscribes to --
+          # so CloudFormation saw a loop and refused the whole changeset.
+          # This function only calls lambda:PutFunctionConcurrency and
+          # never touches S3, so it needs neither reference.
+          UPLOAD_BUCKET: ""
           PROTECTED_FUNCTION_NAME: !Sub "gatemaster-api-${Stage}"
       Policies:
         # Exactly one action on exactly one function. A broader policy
