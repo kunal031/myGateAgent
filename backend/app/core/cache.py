@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from typing import Any, Callable
 
@@ -48,6 +49,13 @@ _warned = False
 #: once a client exists, so this only covers the first connection.
 _retry_after = 0.0
 RETRY_SECONDS = 30.0
+#: Guards the first connection. Without it a burst of threads arriving
+#: on a cold client races: one wins the backoff slot and connects, and
+#: every other thread sees the just-set _retry_after and gives up, so
+#: they all fall back despite Redis being perfectly reachable. That is
+#: not just a lost cache hit -- for the quota counter it meant 49 of 50
+#: callers using the per-process file and overshooting a shared cap.
+_connect_lock = threading.Lock()
 
 
 def _settings_url() -> str:
@@ -67,17 +75,30 @@ def get_client():
     if _client is not None:
         return _client
 
-    # Back off between attempts so a request does not pay the connect
-    # timeout every time while Redis is down.
-    now = time.monotonic()
-    if now < _retry_after:
-        return None
-    _retry_after = now + RETRY_SECONDS
+    with _connect_lock:
+        # Re-checked inside the lock: by the time a waiting thread gets
+        # here another may already have connected.
+        if _client is not None:
+            return _client
 
-    url = _settings_url()
-    if not url:
-        logger.info("REDIS_URL is empty; caching is disabled")
-        return None
+        # Back off between attempts so a request does not pay the connect
+        # timeout every time while Redis is down.
+        now = time.monotonic()
+        if now < _retry_after:
+            return None
+        _retry_after = now + RETRY_SECONDS
+
+        url = _settings_url()
+        if not url:
+            logger.info("REDIS_URL is empty; caching is disabled")
+            return None
+
+        return _connect(url)
+
+
+def _connect(url: str):
+    """Open the client, or return None. Called holding _connect_lock."""
+    global _client, _warned
 
     try:
         import redis
