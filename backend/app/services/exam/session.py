@@ -11,6 +11,7 @@ from ...models.models import Attempt, MistakeRegistry, Question, Subject
 from .patterns import ExamPattern
 from .scoring import score_item
 from ..activity import record
+from ..cache_keys import invalidate_user
 
 
 class NotEnoughQuestions(RuntimeError):
@@ -257,4 +258,10 @@ def submit_session(db: Session, session_id: int, *,
 
     db.commit()
     db.refresh(session)
+
+    # A submitted exam changes every analytics panel at once, so the
+    # user's cached values go after the commit -- invalidating before it
+    # would let a concurrent read repopulate from the pre-commit state.
+    invalidate_user(session.user_id)
+
     return session

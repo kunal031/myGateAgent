@@ -6,6 +6,7 @@ from typing import Optional, List
 import json
 from datetime import datetime
 from ..core.auth import current_user
+from ..services.cache_keys import invalidate_user
 from ..core.database import get_db
 from ..models.models import Question, Subject, Topic, Attempt, MistakeRegistry
 
@@ -176,7 +177,13 @@ def submit_answer(payload: AnswerSubmission, db: Session = Depends(get_db),
             mistake.mastery_level = min(5, mistake.mastery_level + 1)
             
     db.commit()
-    
+
+    # After the commit, never before: invalidating first would leave a
+    # window where a concurrent read repopulates the cache from the
+    # pre-commit state, and that stale value would then outlive the write
+    # for a full TTL.
+    invalidate_user(user.id)
+
     return {
         "is_correct": is_correct,
         "marks_awarded": marks_awarded,

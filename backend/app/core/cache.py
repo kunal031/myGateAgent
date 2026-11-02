@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
-import os
+import time
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
@@ -38,10 +38,16 @@ CACHE_VERSION = "v1"
 NAMESPACE = "gateai"
 
 _client: "redis.Redis | None" = None  # noqa: F821
-_configured = False
 #: Logged once rather than per request: a down Redis would otherwise
 #: produce a line per call and bury everything else.
 _warned = False
+#: When to next attempt a connection after a failure. Without this, a
+#: Redis that is not up yet when the API starts -- an ordinary race in
+#: compose, where the api container can win -- would leave caching off
+#: until someone restarted the process. redis-py reconnects by itself
+#: once a client exists, so this only covers the first connection.
+_retry_after = 0.0
+RETRY_SECONDS = 30.0
 
 
 def _settings_url() -> str:
@@ -56,12 +62,18 @@ def get_client():
     Created lazily so importing this module never opens a socket, which
     keeps it usable from CLI commands and tests that have no Redis.
     """
-    global _client, _configured, _warned
+    global _client, _warned, _retry_after
 
-    if _configured:
+    if _client is not None:
         return _client
 
-    _configured = True
+    # Back off between attempts so a request does not pay the connect
+    # timeout every time while Redis is down.
+    now = time.monotonic()
+    if now < _retry_after:
+        return None
+    _retry_after = now + RETRY_SECONDS
+
     url = _settings_url()
     if not url:
         logger.info("REDIS_URL is empty; caching is disabled")
@@ -97,10 +109,10 @@ def get_client():
 
 def reset_client() -> None:
     """Forget the cached handle. For tests, and after a config change."""
-    global _client, _configured, _warned
+    global _client, _warned, _retry_after
     _client = None
-    _configured = False
     _warned = False
+    _retry_after = 0.0
 
 
 def key(kind: str, *parts: Any) -> str:

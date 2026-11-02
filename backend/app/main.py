@@ -11,6 +11,7 @@ from .api import (
     agent, auth, assistant, exam, feed, papers, profile, quiz, stats,
     syllabus,
 )
+from .core.cache import stats as cache_stats
 from .core.config import settings
 from .core.lifespan import lifespan
 
@@ -50,4 +51,8 @@ def health_check():
         "app": "GateMaster",
         "version": settings.VERSION,
         "gemini_configured": settings.gemini_configured,
+        # Reported because a cache that has quietly stopped working looks
+        # exactly like a slow app from the outside. {"enabled": false}
+        # here is the first thing to check.
+        "cache": cache_stats(),
     }
