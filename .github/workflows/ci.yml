@@ -1,0 +1,87 @@
+# Backend tests and frontend build on every push and pull request.
+#
+# No database service: the tests run against a throwaway SQLite file that
+# tests/env_setup.py creates, so there is nothing to provision and nothing
+# that can reach the real corpus.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# A new push to the same branch cancels the run already in flight, so a
+# series of fixup commits does not queue five redundant builds.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Tests
+        # JWT_SECRET is required for the app to start at all, and the
+        # tests sign their own tokens with it. A throwaway value: it
+        # signs nothing outside this runner.
+        env:
+          JWT_SECRET: ci-only-secret-not-used-anywhere-else-0123456789
+        run: python -m pytest
+
+      - name: Every module imports
+        # Catches an ImportError in a module no test happens to touch --
+        # a CLI entry point or a migration -- which otherwise surfaces
+        # first in production.
+        env:
+          JWT_SECRET: ci-only-secret-not-used-anywhere-else-0123456789
+          DB_TARGET: sqlite
+        run: |
+          python - <<'PY'
+          import importlib, pkgutil
+          import app
+          failed = []
+          for m in pkgutil.walk_packages(app.__path__, "app."):
+              try:
+                  importlib.import_module(m.name)
+              except Exception as exc:
+                  failed.append(f"{m.name}: {type(exc).__name__}: {exc}")
+          if failed:
+              raise SystemExit("import failures:\n" + "\n".join(failed))
+          print("all modules import")
+          PY
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
