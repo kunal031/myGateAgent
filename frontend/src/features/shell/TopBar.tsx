@@ -29,7 +29,7 @@ export default function TopBar({ onMenu }: { onMenu: () => void }) {
       <div className="flex items-center gap-2">
         <Zap className="h-4 w-4" style={{ color: "var(--ink)" }} />
         <span className="text-sm font-extrabold tracking-wide" style={{ color: "var(--ink)" }}>
-          GATEMASTER
+          gate.ai
         </span>
       </div>
 

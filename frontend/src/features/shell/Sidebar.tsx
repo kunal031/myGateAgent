@@ -60,7 +60,7 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
             </div>
             <div>
               <div className="text-sm font-extrabold tracking-wide" style={{ color: "var(--ink)" }}>
-                GATEMASTER
+                gate.ai
               </div>
             </div>
           </div>

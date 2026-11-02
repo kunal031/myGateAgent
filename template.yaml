@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 
 Description: >
-  GateMaster API on Lambda. Two functions behind one stack: a short-lived
+  gate.ai API on Lambda. Two functions behind one stack: a short-lived
   API behind HTTP API Gateway, and a long-running worker for the work that
   cannot fit inside a request.
 

@@ -198,7 +198,7 @@ def run(*, pages: int | None, dry_run: bool) -> None:
     client = httpx.Client(headers={
         # Identifies the client honestly rather than impersonating a
         # browser, and points at the project if they want to object.
-        "User-Agent": "GateMasterBot/1.0 (personal GATE study tool)",
+        "User-Agent": "GateAiBot/1.0 (personal GATE study tool)",
     })
 
     for path, subject_slug in SOURCES.items():

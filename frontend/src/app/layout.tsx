@@ -9,7 +9,7 @@ import AuthProvider from "@/features/auth/AuthProvider";
 import { THEME_INIT_SCRIPT, ThemeProvider } from "@/features/theme/ThemeProvider";
 
 export const metadata: Metadata = {
-  title: "GateMaster | GATE CSE 2027",
+  title: "gate.ai | GATE CSE 2027",
   description:
     "Targeted preparation, active recall feed, drills, and RAG tutor for GATE CSE 2027.",
 };
