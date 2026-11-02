@@ -1,6 +1,11 @@
 /** Question papers: importing a batch of questions from a URL or a PDF. */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
+import { api } from "./client/web";
+
+// This module used to read NEXT_PUBLIC_API_BASE while every other module
+// read NEXT_PUBLIC_API_URL, so a deployment that set only the documented
+// one left the paper importer talking to localhost. Going through the
+// shared client removes the second name entirely.
 
 export type QuestionType = "MCQ" | "MSQ" | "NAT";
 
@@ -90,14 +95,6 @@ export interface StoredQuestion {
   review_status: string;
 }
 
-async function json<T>(res: Response, fallback: string): Promise<T> {
-  if (!res.ok) {
-    const detail = await res.json().catch(() => null);
-    throw new Error(detail?.detail ?? fallback);
-  }
-  return res.json();
-}
-
 export async function fetchPapers(
   params: { subjectSlug?: string; topicSlug?: string } = {},
   signal?: AbortSignal,
@@ -109,8 +106,9 @@ export async function fetchPapers(
   if (params.topicSlug && params.topicSlug !== "all") {
     search.set("topic_slug", params.topicSlug);
   }
-  const res = await fetch(`${API_BASE}/api/papers?${search.toString()}`, { signal });
-  const data = await json<{ items: QuestionPaper[] }>(res, "Could not load papers");
+  const data = await api.get<{ items: QuestionPaper[] }>("/api/papers", {
+    query: Object.fromEntries(search), signal,
+  });
   return data.items;
 }
 
@@ -126,12 +124,7 @@ export async function importPaperFromUrl(input: {
   topic_slug: string;
   name?: string;
 }): Promise<QueuedImport> {
-  const res = await fetch(`${API_BASE}/api/papers/import/url`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  return json<QueuedImport>(res, "Could not import from that link");
+  return api.post<QueuedImport>("/api/papers/import/url", input);
 }
 
 export async function importPaperFromPdf(input: {
@@ -147,11 +140,11 @@ export async function importPaperFromPdf(input: {
   if (input.name) form.append("name", input.name);
 
   // No Content-Type header: the browser sets the multipart boundary.
-  const res = await fetch(`${API_BASE}/api/papers/import/upload`, {
-    method: "POST",
-    body: form,
+  // `form`, not `body`: the client leaves Content-Type unset so the
+  // runtime can add the multipart boundary.
+  return api.request<QueuedImport>("/api/papers/import/upload", {
+    method: "POST", form,
   });
-  return json<QueuedImport>(res, "Could not import that file");
 }
 
 export async function confirmPaperImport(
@@ -159,12 +152,9 @@ export async function confirmPaperImport(
   questions: ParsedQuestion[],
   generateExplanations = true,
 ): Promise<QueuedImport> {
-  const res = await fetch(`${API_BASE}/api/papers/${paperId}/confirm`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ questions, generate_explanations: generateExplanations }),
+  return api.post<QueuedImport>(`/api/papers/${paperId}/confirm`, {
+    questions, generate_explanations: generateExplanations,
   });
-  return json<QueuedImport>(res, "Could not save those questions");
 }
 
 /** Light enough to poll once a second while an import runs. */
@@ -172,8 +162,7 @@ export async function fetchPaperStatus(
   paperId: number,
   signal?: AbortSignal,
 ): Promise<PaperProgress> {
-  const res = await fetch(`${API_BASE}/api/papers/${paperId}/status`, { signal });
-  return json<PaperProgress>(res, "Could not read import progress");
+  return api.get<PaperProgress>(`/api/papers/${paperId}/status`, { signal });
 }
 
 /** The parsed questions awaiting review, recoverable after a reload. */
@@ -181,16 +170,14 @@ export async function fetchPaperPreview(
   paperId: number,
   signal?: AbortSignal,
 ): Promise<ImportPreview> {
-  const res = await fetch(`${API_BASE}/api/papers/${paperId}/preview`, { signal });
-  return json<ImportPreview>(res, "Could not load what was found");
+  return api.get<ImportPreview>(`/api/papers/${paperId}/preview`, { signal });
 }
 
 export async function fetchPaper(
   paperId: number,
   signal?: AbortSignal,
 ): Promise<{ paper: QuestionPaper; questions: StoredQuestion[] }> {
-  const res = await fetch(`${API_BASE}/api/papers/${paperId}`, { signal });
-  return json(res, "Could not load that paper");
+  return api.get(`/api/papers/${paperId}`, { signal });
 }
 
 export async function editPaperQuestion(
@@ -201,26 +188,18 @@ export async function editPaperQuestion(
     question_type?: QuestionType;
   },
 ): Promise<Partial<StoredQuestion> & { id: number }> {
-  const res = await fetch(`${API_BASE}/api/papers/questions/${questionId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(patch),
-  });
-  return json(res, "Could not save that change");
+  return api.patch(`/api/papers/questions/${questionId}`, patch);
 }
 
 export async function deletePaper(
   paperId: number,
   deleteQuestions = false,
 ): Promise<void> {
-  const res = await fetch(
-    `${API_BASE}/api/papers/${paperId}?delete_questions=${deleteQuestions}`,
-    { method: "DELETE" },
-  );
-  if (!res.ok) {
-    const detail = await res.json().catch(() => null);
-    throw new Error(detail?.detail ?? "Could not delete that paper");
-  }
+  // ApiError carries the server's own message, so the hand-rolled
+  // detail extraction this replaced is no longer needed.
+  await api.request(`/api/papers/${paperId}`, {
+    method: "DELETE", query: { delete_questions: deleteQuestions },
+  });
 }
 
 /** Create a topic, so a paper can be filed somewhere that does not exist yet. */
@@ -228,10 +207,7 @@ export async function createTopic(
   subjectSlug: string,
   name: string,
 ): Promise<{ id: number; name: string; slug: string; created: boolean }> {
-  const res = await fetch(`${API_BASE}/api/syllabus/topics`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ subject_slug: subjectSlug, name }),
+  return api.post("/api/syllabus/topics", {
+    subject_slug: subjectSlug, name,
   });
-  return json(res, "Could not create that topic");
 }

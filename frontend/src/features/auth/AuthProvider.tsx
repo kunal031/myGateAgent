@@ -6,7 +6,7 @@ import React, {
 
 import {
   AuthUser, clearSession, consumeOAuthFragment, fetchMe,
-  installAuthInterceptor, login as apiLogin, logout as apiLogout,
+  login as apiLogin, logout as apiLogout, onSignedOut,
   register as apiRegister, startGoogleSignIn, storeSession,
 } from "@/lib/auth";
 
@@ -27,7 +27,8 @@ interface AuthState {
 const Context = createContext<AuthState | null>(null);
 
 /**
- * Holds the signed-in account and installs the fetch interceptor.
+ * Holds the signed-in account, and tells the API client where to report
+ * a dead session.
  *
  * `loading` exists so the app does not render a signed-out view for a
  * frame before the stored token is validated -- on a mobile connection
@@ -40,27 +41,32 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
   const [oauthNext, setOauthNext] = useState("");
 
   const handleSignedOut = useCallback(() => {
-    clearSession();
+    void clearSession();
     setUser(null);
   }, []);
 
   useEffect(() => {
-    installAuthInterceptor(handleSignedOut);
+    onSignedOut(handleSignedOut);
     let cancelled = false;
 
-    // A Google sign-in returns here with tokens in the URL fragment. They
-    // are adopted before fetchMe runs, so the very first /me call carries
-    // the new token rather than failing and, on a slow connection,
-    // bouncing the user back to the sign-in screen they just left.
+    // A Google sign-in returns here with tokens in the URL fragment.
+    // Awaited before fetchMe, so the first /me call carries the new
+    // token rather than failing and, on a slow connection, bouncing the
+    // user back to the sign-in screen they just left. Storage is async
+    // now (React Native's is), so this has to be a chain rather than
+    // two statements.
     const returned = consumeOAuthFragment();
-    if (returned && "error" in returned) {
-      setOauthError(returned.error);
-    } else if (returned) {
-      storeSession(returned.session);
-      setOauthNext(returned.next);
-    }
+    const adopted =
+      returned && !("error" in returned)
+        ? storeSession(returned.session).then(() => {
+            if (!cancelled) setOauthNext(returned.next);
+          })
+        : Promise.resolve();
 
-    fetchMe()
+    if (returned && "error" in returned) setOauthError(returned.error);
+
+    adopted
+      .then(() => fetchMe())
       .then((me) => !cancelled && setUser(me))
       .catch(() => {})
       .finally(() => !cancelled && setLoading(false));
@@ -68,15 +74,14 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
   }, [handleSignedOut]);
 
   const signIn = useCallback(async (email: string, password: string) => {
+    // authenticate() already persisted the tokens.
     const session = await apiLogin(email, password);
-    storeSession(session);
     setUser(session.user);
   }, []);
 
   const signUp = useCallback(
     async (email: string, password: string, name: string) => {
       const session = await apiRegister(email, password, name);
-      storeSession(session);
       setUser(session.user);
     },
     [],

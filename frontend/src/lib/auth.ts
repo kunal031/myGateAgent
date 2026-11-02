@@ -1,23 +1,20 @@
 /**
- * Who is signed in, and attaching that to every request.
+ * Who is signed in.
  *
- * There are 37 fetch calls across three modules and no shared wrapper, so
- * rather than editing each one this installs an interceptor: the token is
- * attached to API requests centrally, and an expired one is refreshed once
- * and the request retried. Doing it per call site would mean 37 chances to
- * forget, and the symptom of forgetting is a 401 on one screen only.
+ * The token plumbing lives in lib/client: this module is the web app's
+ * session on top of it -- sign-in, Google's redirect dance, and the
+ * browser-only bits (window.location, the URL fragment) that a React
+ * Native app replaces with its own.
+ *
+ * The previous version reassigned `window.fetch` to attach the token.
+ * That is gone. Every call now goes through the shared ApiClient, which
+ * attaches it explicitly and refreshes on a 401 -- the same behaviour,
+ * but visible, testable, and portable to a platform with no `window`.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+import { api, tokenStore, onSignedOut, API_BASE } from "./client/web";
 
-const ACCESS_KEY = "gm.access";
-const REFRESH_KEY = "gm.refresh";
-
-/** Captured before the interceptor replaces window.fetch, so calls made
- *  through it do not recurse into themselves. Must be declared before any
- *  function that uses it runs -- const is not hoisted. */
-const originalFetch: typeof fetch =
-  typeof window === "undefined" ? fetch : window.fetch.bind(window);
+export { onSignedOut };
 
 export interface AuthUser {
   id: number;
@@ -35,69 +32,52 @@ export interface AuthSession {
   refresh_token: string;
 }
 
-/** Reading storage can throw in private mode, so every access is guarded. */
-function read(key: string): string | null {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-function write(key: string, value: string | null): void {
-  try {
-    if (value === null) localStorage.removeItem(key);
-    else localStorage.setItem(key, value);
-  } catch {
-    // Private mode or blocked storage: the session lasts this page only.
-  }
-}
-
-export const accessToken = () => read(ACCESS_KEY);
-export const refreshToken = () => read(REFRESH_KEY);
+/** Tokens are stored through the client's TokenStore, so a React
+ *  Native app swaps localStorage for SecureStore without touching this. */
+export const accessToken = () => tokenStore.getAccessToken();
+export const refreshToken = () => tokenStore.getRefreshToken();
 
 /** Takes only the tokens, so the OAuth callback -- which receives tokens
  *  without a user object -- can use it and then fetch the user. */
 export function storeSession(
   session: Pick<AuthSession, "access_token" | "refresh_token">,
-): void {
-  write(ACCESS_KEY, session.access_token);
-  write(REFRESH_KEY, session.refresh_token);
-}
-
-export function clearSession(): void {
-  write(ACCESS_KEY, null);
-  write(REFRESH_KEY, null);
-}
-
-async function post<T>(path: string, body: unknown): Promise<T> {
-  // Deliberately the raw fetch: these run before a token exists, and the
-  // interceptor would otherwise try to refresh its way into a loop.
-  const res = await originalFetch(`${API_BASE}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+): Promise<void> {
+  return tokenStore.setTokens({
+    access: session.access_token,
+    refresh: session.refresh_token,
   });
-  if (!res.ok) {
-    const detail = await res.json().catch(() => null);
-    throw new Error(detail?.detail ?? "Request failed");
-  }
-  return res.json();
+}
+
+export function clearSession(): Promise<void> {
+  return tokenStore.clear();
+}
+
+/** Sign in, and keep the session. `anonymous` because these run before a
+ *  token exists and must not trigger a refresh. */
+async function authenticate(
+  path: string, body: unknown,
+): Promise<AuthSession> {
+  const session = await api.request<AuthSession>(path, {
+    method: "POST", body, anonymous: true,
+  });
+  await storeSession(session);
+  return session;
 }
 
 export const login = (email: string, password: string) =>
-  post<AuthSession>("/api/auth/login", { email, password });
+  authenticate("/api/auth/login", { email, password });
 
 export const register = (
   email: string, password: string, display_name: string,
-) => post<AuthSession>("/api/auth/register", { email, password, display_name });
+) => authenticate("/api/auth/register", { email, password, display_name });
 
 /** Whether this deployment has Google sign-in configured. */
 export async function googleEnabled(): Promise<boolean> {
   try {
-    const res = await originalFetch(`${API_BASE}/api/auth/google/config`);
-    if (!res.ok) return false;
-    return Boolean((await res.json())?.enabled);
+    const config = await api.request<{ enabled?: boolean }>(
+      "/api/auth/google/config", { anonymous: true },
+    );
+    return Boolean(config?.enabled);
   } catch {
     return false;
   }
@@ -145,80 +125,22 @@ export function consumeOAuthFragment():
 }
 
 export async function logout(): Promise<void> {
-  const token = accessToken();
-  if (token) {
-    await originalFetch(`${API_BASE}/api/auth/logout`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-    }).catch(() => {});
+  // Best effort: the server bumps token_version and revokes the session
+  // rows, but a failed call must still clear this device.
+  try {
+    await api.post("/api/auth/logout");
+  } catch {
+    // Offline, or the token already expired. Clearing below is what
+    // actually signs this device out.
   }
-  clearSession();
+  await clearSession();
 }
 
 export async function fetchMe(): Promise<AuthUser | null> {
-  const token = accessToken();
-  if (!token) return null;
-  const res = await originalFetch(`${API_BASE}/api/auth/me`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  return res.ok ? res.json() : null;
-}
-
-//: Concurrent 401s share one refresh rather than each starting their own,
-//: which would invalidate each other's tokens and sign the user out.
-let refreshing: Promise<boolean> | null = null;
-
-async function refreshSession(): Promise<boolean> {
-  const token = refreshToken();
-  if (!token) return false;
+  if (!(await tokenStore.getAccessToken())) return null;
   try {
-    const session = await post<AuthSession>("/api/auth/refresh", {
-      refresh_token: token,
-    });
-    storeSession(session);
-    return true;
+    return await api.get<AuthUser>("/api/auth/me");
   } catch {
-    clearSession();
-    return false;
+    return null;
   }
-}
-
-let installed = false;
-
-/** Attach the token to API calls, refreshing once on expiry. */
-export function installAuthInterceptor(onSignedOut: () => void): void {
-  if (installed || typeof window === "undefined") return;
-  installed = true;
-
-  window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input.toString();
-    // Only our own API, and never the auth routes themselves.
-    if (!url.startsWith(API_BASE) || url.includes("/api/auth/")) {
-      return originalFetch(input, init);
-    }
-
-    const withToken = (token: string | null): RequestInit => {
-      if (!token) return init ?? {};
-      const headers = new Headers(init?.headers);
-      headers.set("Authorization", `Bearer ${token}`);
-      return { ...init, headers };
-    };
-
-    let response = await originalFetch(input, withToken(accessToken()));
-    if (response.status !== 401) return response;
-
-    // One refresh, shared by everything that got a 401 at once.
-    refreshing = refreshing ?? refreshSession().finally(() => {
-      refreshing = null;
-    });
-    const renewed = await refreshing;
-    if (!renewed) {
-      onSignedOut();
-      return response;
-    }
-
-    response = await originalFetch(input, withToken(accessToken()));
-    if (response.status === 401) onSignedOut();
-    return response;
-  };
 }

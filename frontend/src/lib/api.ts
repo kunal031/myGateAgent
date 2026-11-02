@@ -1,4 +1,10 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+import { api } from "./client/web";
+
+// Kept as an export because a few components still build URLs directly
+// (an EventSource, a progress poll). The shared client is the path for
+// anything new.
+export const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 export interface TopicItem {
   id: number;
@@ -138,9 +144,7 @@ export interface AgentDocumentsResponse {
 }
 
 export async function fetchSyllabus(): Promise<SubjectItem[]> {
-  const res = await fetch(`${API_BASE}/api/syllabus`);
-  if (!res.ok) throw new Error("Failed to fetch syllabus");
-  return res.json();
+  return api.get(`/api/syllabus`);
 }
 
 export interface FeedPage {
@@ -178,25 +182,19 @@ export async function fetchFeed(
   params.append("offset", String(offset));
   params.append("limit", String(limit));
 
-  const res = await fetch(`${API_BASE}/api/feed?${params}`);
-  if (!res.ok) throw new Error("Failed to fetch feed");
-  return res.json();
+  return api.get(`/api/feed?${params}`);
 }
 
 // ---- Rotation ----
 
 export async function markCardSeen(cardId: number): Promise<void> {
-  await fetch(`${API_BASE}/api/feed/cards/${cardId}/seen`, { method: "POST" });
+  await api.post(`/api/feed/cards/${cardId}/seen`);
 }
 
 export async function markCardRecalled(
   cardId: number,
 ): Promise<{ recall_count: number; mastered: boolean; due_at: string | null }> {
-  const res = await fetch(`${API_BASE}/api/feed/cards/${cardId}/recall`, {
-    method: "POST",
-  });
-  if (!res.ok) throw new Error("Could not record that");
-  return res.json();
+  return api.post(`/api/feed/cards/${cardId}/recall`);
 }
 
 // ---- Assistant ----
@@ -238,13 +236,7 @@ export async function askAssistant(body: {
   card_id?: number;
   language?: AssistantLanguage;
 }): Promise<AssistantResult> {
-  const res = await fetch(`${API_BASE}/api/assistant/ask`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error((await res.json()).detail ?? "Assistant unavailable");
-  return res.json();
+  return api.post(`/api/assistant/ask`, body);
 }
 
 export interface AssistantMessage {
@@ -317,9 +309,7 @@ export async function askAndWait(
 export async function fetchThread(
   threadId: number,
 ): Promise<{ id: number; title: string; messages: AssistantMessage[]; pending?: boolean }> {
-  const res = await fetch(`${API_BASE}/api/assistant/threads/${threadId}`);
-  if (!res.ok) throw new Error("Could not load that conversation");
-  return res.json();
+  return api.get(`/api/assistant/threads/${threadId}`);
 }
 
 export async function fetchQuiz(params: {
@@ -336,25 +326,15 @@ export async function fetchQuiz(params: {
   if (params.difficulty && params.difficulty !== "all") qParams.append("difficulty", params.difficulty);
   if (params.limit) qParams.append("limit", params.limit.toString());
   
-  const res = await fetch(`${API_BASE}/api/quiz?${qParams.toString()}`);
-  if (!res.ok) throw new Error("Failed to fetch quiz questions");
-  return res.json();
+  return api.get(`/api/quiz?${qParams.toString()}`);
 }
 
 export async function submitQuizAnswer(payload: SubmitPayload): Promise<SubmitResponse> {
-  const res = await fetch(`${API_BASE}/api/quiz/submit`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) throw new Error("Failed to submit answer");
-  return res.json();
+  return api.post(`/api/quiz/submit`, payload);
 }
 
 export async function fetchStats(): Promise<StatsSummary> {
-  const res = await fetch(`${API_BASE}/api/stats/summary`);
-  if (!res.ok) throw new Error("Failed to fetch statistics");
-  return res.json();
+  return api.get(`/api/stats/summary`);
 }
 
 export async function chatWithAgent(query: string, subjectSlug?: string): Promise<AgentChatResponse> {
@@ -383,9 +363,7 @@ export async function chatWithAgent(query: string, subjectSlug?: string): Promis
 }
 
 export async function fetchAgentDocuments(): Promise<AgentDocumentsResponse> {
-  const res = await fetch(`${API_BASE}/api/agent/documents`);
-  if (!res.ok) throw new Error("Failed to fetch agent documents");
-  return res.json();
+  return api.get(`/api/agent/documents`);
 }
 
 // ---- Mock test ----
@@ -464,9 +442,7 @@ export interface ExamPatterns {
 }
 
 export async function fetchExamPatterns(): Promise<ExamPatterns> {
-  const res = await fetch(`${API_BASE}/api/exam/patterns`);
-  if (!res.ok) throw new Error("Failed to load exam patterns");
-  return res.json();
+  return api.get(`/api/exam/patterns`);
 }
 
 export async function startExam(body: {
@@ -481,23 +457,15 @@ export async function startExam(body: {
   name?: string;
   kind?: "quiz" | "test";
 }): Promise<ExamSummary> {
-  const res = await fetch(`${API_BASE}/api/exam/start`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error((await res.json()).detail ?? "Could not start test");
-  return res.json();
+  return api.post(`/api/exam/start`, body);
 }
 
 export async function fetchExam(id: number): Promise<ExamSummary> {
-  const res = await fetch(`${API_BASE}/api/exam/${id}`);
-  if (!res.ok) throw new Error("Failed to load test");
-  return res.json();
+  return api.get(`/api/exam/${id}`);
 }
 
 export async function visitExamQuestion(id: number, position: number) {
-  await fetch(`${API_BASE}/api/exam/${id}/visit/${position}`, { method: "POST" });
+  await api.post(`/api/exam/${id}/visit/${position}`);
 }
 
 export async function saveExamAnswer(
@@ -505,25 +473,15 @@ export async function saveExamAnswer(
   position: number,
   body: { answer?: string; marked?: boolean; time_spent_seconds?: number },
 ): Promise<{ position: number; state: ExamState; user_answer: string }> {
-  const res = await fetch(`${API_BASE}/api/exam/${id}/answer/${position}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error("Failed to save answer");
-  return res.json();
+  return api.post(`/api/exam/${id}/answer/${position}`, body);
 }
 
 export async function submitExam(id: number): Promise<ExamSummary> {
-  const res = await fetch(`${API_BASE}/api/exam/${id}/submit`, { method: "POST" });
-  if (!res.ok) throw new Error("Failed to submit test");
-  return res.json();
+  return api.post(`/api/exam/${id}/submit`);
 }
 
 export async function fetchExamResult(id: number): Promise<ExamResult> {
-  const res = await fetch(`${API_BASE}/api/exam/${id}/result`);
-  if (!res.ok) throw new Error("Failed to load result");
-  return res.json();
+  return api.get(`/api/exam/${id}/result`);
 }
 
 export async function fetchExamHistory(
@@ -536,9 +494,7 @@ export async function fetchExamHistory(
   }
   if (options.since) params.set("since", options.since);
 
-  const res = await fetch(`${API_BASE}/api/exam?${params}`);
-  if (!res.ok) throw new Error("Failed to load history");
-  return res.json();
+  return api.get(`/api/exam?${params}`);
 }
 
 
@@ -562,45 +518,21 @@ export interface SolutionResponse {
 }
 
 export async function fetchSolution(questionId: number): Promise<SolutionResponse> {
-  const res = await fetch(`${API_BASE}/api/quiz/${questionId}/solution`);
-  if (!res.ok) throw new Error((await res.json()).detail ?? "Solution unavailable");
-  return res.json();
+  return api.get(`/api/quiz/${questionId}/solution`);
 }
 
 export async function createUserCard(input: UserCardInput): Promise<FeedCardItem> {
-  const res = await fetch(`${API_BASE}/api/feed`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  if (!res.ok) {
-    const detail = await res.json().catch(() => null);
-    throw new Error(detail?.detail ?? "Could not save that card");
-  }
-  return res.json();
+  return api.post(`/api/feed`, input);
 }
 
 export async function updateUserCard(
   id: number, input: UserCardInput,
 ): Promise<FeedCardItem> {
-  const res = await fetch(`${API_BASE}/api/feed/${id}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  if (!res.ok) {
-    const detail = await res.json().catch(() => null);
-    throw new Error(detail?.detail ?? "Could not update that card");
-  }
-  return res.json();
+  return api.patch(`/api/feed/${id}`, input);
 }
 
 export async function deleteUserCard(id: number): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/feed/${id}`, { method: "DELETE" });
-  if (!res.ok) {
-    const detail = await res.json().catch(() => null);
-    throw new Error(detail?.detail ?? "Could not delete that card");
-  }
+  await api.delete(`/api/feed/${id}`);
 }
 
 /** Findings worth acting on, from /api/stats/insights. */
@@ -656,15 +588,12 @@ export interface DeepAnalytics {
 }
 
 export async function fetchInsights(): Promise<Insight[]> {
-  const res = await fetch(`${API_BASE}/api/stats/insights`);
-  if (!res.ok) throw new Error("Could not load insights");
-  return (await res.json()).insights;
+  const page = await api.get<{ insights: Insight[] }>("/api/stats/insights");
+  return page.insights;
 }
 
 export async function fetchDeepAnalytics(): Promise<DeepAnalytics> {
-  const res = await fetch(`${API_BASE}/api/stats/deep`);
-  if (!res.ok) throw new Error("Could not load analytics");
-  return res.json();
+  return api.get(`/api/stats/deep`);
 }
 
 // ------------------------------------------------------------- profile
@@ -698,27 +627,17 @@ export interface ProfileStats {
 }
 
 export async function fetchProfile(): Promise<ProfileInfo> {
-  const res = await fetch(`${API_BASE}/api/profile/me`);
-  if (!res.ok) throw new Error("Could not load your profile");
-  return res.json();
+  return api.get(`/api/profile/me`);
 }
 
 export async function fetchProfileStats(): Promise<ProfileStats> {
-  const res = await fetch(`${API_BASE}/api/profile/me/stats`);
-  if (!res.ok) throw new Error("Could not load your stats");
-  return res.json();
+  return api.get(`/api/profile/me/stats`);
 }
 
 export async function updateProfile(
   patch: { display_name?: string; phone?: string },
 ): Promise<ProfileInfo> {
-  const res = await fetch(`${API_BASE}/api/profile/me`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(patch),
-  });
-  if (!res.ok) throw new Error("Could not save your profile");
-  return res.json();
+  return api.patch(`/api/profile/me`, patch);
 }
 
 /** Returns fresh tokens: changing the password invalidates the old ones,
@@ -727,18 +646,12 @@ export async function updateProfile(
 export async function changePassword(
   current_password: string, new_password: string,
 ): Promise<{ access_token: string; refresh_token: string }> {
-  const res = await fetch(`${API_BASE}/api/profile/me/password`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ current_password, new_password }),
+  // ApiError carries the server's own message, which distinguishes a
+  // wrong current password from a reused one -- both worth showing
+  // verbatim.
+  return api.post(`/api/profile/me/password`, {
+    current_password, new_password,
   });
-  if (!res.ok) {
-    // The server's message distinguishes a wrong current password from a
-    // reused one, and both are worth showing verbatim.
-    const detail = await res.json().catch(() => null);
-    throw new Error(detail?.detail ?? "Could not change your password");
-  }
-  return res.json();
 }
 
 // ------------------------------------------------- hierarchy drill-down
@@ -793,9 +706,7 @@ export type ConceptView = "fix" | "learned" | "revised";
 export async function fetchBreakdown(
   view: ConceptView = "fix",
 ): Promise<BreakdownNode[]> {
-  const res = await fetch(`${API_BASE}/api/stats/breakdown?view=${view}`);
-  if (!res.ok) throw new Error("Could not load the subject breakdown");
-  return res.json();
+  return api.get(`/api/stats/breakdown?view=${view}`);
 }
 
 /** The children of any node. Takes the level and id straight off the node
@@ -803,11 +714,9 @@ export async function fetchBreakdown(
 export async function fetchBreakdownChildren(
   level: string, id: number, view: ConceptView = "fix",
 ): Promise<BreakdownNode[]> {
-  const res = await fetch(
-    `${API_BASE}/api/stats/breakdown/${level}/${id}?view=${view}`,
-  );
-  if (!res.ok) throw new Error("Could not load that level");
-  return res.json();
+  return api.get(`/api/stats/breakdown/${level}/${id}`, {
+    query: { view },
+  });
 }
 
 /** Mark a concept learned or revised directly, on the student's own
@@ -815,13 +724,7 @@ export async function fetchBreakdownChildren(
 export async function markConcept(
   conceptId: number, action: "learn" | "revise" | "undo",
 ): Promise<{ concept_id: number; status: string; revision_count: number }> {
-  const res = await fetch(`${API_BASE}/api/feed/concepts/${conceptId}/mark`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action }),
-  });
-  if (!res.ok) throw new Error("Could not update that concept");
-  return res.json();
+  return api.post(`/api/feed/concepts/${conceptId}/mark`, { action });
 }
 
 /** Concepts in one state, grouped subject -> chapter -> topic. */
@@ -847,9 +750,7 @@ export interface RollupNode {
 export async function fetchConceptRollup(
   view: "fix" | "learned" | "revised",
 ): Promise<ConceptRollup> {
-  const res = await fetch(`${API_BASE}/api/stats/concepts/${view}`);
-  if (!res.ok) throw new Error("Could not load that view");
-  return res.json();
+  return api.get(`/api/stats/concepts/${view}`);
 }
 
 /** Write a solution for a question that has none.
@@ -861,15 +762,7 @@ export async function fetchConceptRollup(
 export async function generateSolution(
   questionId: number,
 ): Promise<{ explanation: string; solution_source: string; generated: boolean }> {
-  const res = await fetch(
-    `${API_BASE}/api/quiz/${questionId}/solution/generate`,
-    { method: "POST" },
-  );
-  if (!res.ok) {
-    const detail = await res.json().catch(() => null);
-    throw new Error(detail?.detail ?? "Could not generate a solution");
-  }
-  return res.json();
+  return api.post(`/api/quiz/${questionId}/solution/generate`);
 }
 
 // --------------------------------------------------------- coverage
@@ -907,7 +800,5 @@ export interface CoverageSummary {
 }
 
 export async function fetchCoverage(): Promise<CoverageSummary> {
-  const res = await fetch(`${API_BASE}/api/stats/coverage`);
-  if (!res.ok) throw new Error("Could not load coverage");
-  return res.json();
+  return api.get(`/api/stats/coverage`);
 }
