@@ -190,7 +190,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "gatemaster-api-${Stage}"
-      CodeUri: backend/
+      CodeUri: build/lambda-src/
       Handler: app.lambda_api.handler
       # Below API Gateway's own 29s cap, so a slow request fails as a
       # Lambda timeout with a logged stack rather than an opaque 504.
@@ -251,7 +251,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "gatemaster-worker-${Stage}"
-      CodeUri: backend/
+      CodeUri: build/lambda-src/
       Handler: app.lambda_worker.handler
       # The reason this function exists. Gemini generation with retries
       # was measured at over five minutes against a rate-limited key.
@@ -331,7 +331,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "gatemaster-killswitch-${Stage}"
-      CodeUri: backend/
+      CodeUri: build/lambda-src/
       Handler: app.lambda_killswitch.handler
       # Nothing but a boto3 call; the default 1024 MB would be waste.
       MemorySize: 128
