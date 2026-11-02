@@ -84,6 +84,25 @@ class Settings(BaseSettings):
     #: page. Recomputing costs 40-85ms, so the floor on this is low.
     CACHE_TTL_STATS: int = 120
 
+    # ---- Request limiting ----
+    #: Per-IP requests allowed in RATE_LIMIT_WINDOW. A studying human
+    #: issues a handful per screen -- the analytics page fans out to four
+    #: -- so 120 a minute is far above real use and far below what a
+    #: script does. Zero disables it.
+    #:
+    #: This is a cost guardrail, not an authorisation control: the
+    #: address comes from X-Forwarded-For and is spoofable, and a
+    #: distributed attack gets one budget per source. The gateway
+    #: throttle and Lambda's reserved concurrency are what bound the
+    #: total; this is what stops one caller from spending it.
+    RATE_LIMIT_PER_IP: int = 120
+    RATE_LIMIT_WINDOW: int = 60
+
+    #: Paths exempt from limiting. The health check is polled by
+    #: CloudWatch and by the container healthcheck, and throttling it
+    #: would make the app look down.
+    RATE_LIMIT_EXEMPT: list[str] = ["/api/health"]
+
     # ---- Auth ----
     #: Signs every token. Empty means the app refuses to start, rather
     #: than falling back to a default that would let anyone forge a token

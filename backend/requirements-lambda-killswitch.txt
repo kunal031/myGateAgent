@@ -1,0 +1,3 @@
+# The kill switch needs only boto3, which the Lambda Python runtime
+# already provides. An empty manifest keeps the package at a few KB
+# instead of pulling the API function it lives beside.
