@@ -2,17 +2,19 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Play, Target, Plus, Loader2 } from "lucide-react";
+import { GraduationCap, Play, Target, Plus, Loader2 } from "lucide-react";
 
 import SessionHistory from "@/features/exam/SessionHistory";
 import PaperImporter from "@/features/papers/PaperImporter";
+import PracticeRunner from "@/features/exam/PracticeRunner";
 import { QuestionPaper, fetchPapers } from "@/lib/papers";
+import {
+  ExamPatterns, QuizQuestion, SubjectItem, fetchExamPatterns, fetchQuiz,
+  fetchSyllabus, startExam,
+} from "@/lib/api";
 
 /** Imports that have not finished, and can be reopened from the quiz page. */
 const UNFINISHED = new Set(["parsing", "preview", "saving"]);
-import {
-  ExamPatterns, SubjectItem, fetchExamPatterns, fetchSyllabus, startExam,
-} from "@/lib/api";
 
 const TYPES = [
   { value: "all", label: "All types" },
@@ -30,6 +32,10 @@ export default function QuizPage() {
   const [subject, setSubject] = useState("");
   const [topic, setTopic] = useState("all");
   const [type, setType] = useState("all");
+  /** Non-null while practising; the page renders the runner instead. */
+  const [practice, setPractice] = useState<QuizQuestion[] | null>(null);
+  /** Which flow the filters below will start. */
+  const [mode, setMode] = useState<"practice" | "quiz">("practice");
   const [count, setCount] = useState(10);
   const [minutes, setMinutes] = useState(15);
   const [starting, setStarting] = useState(false);
@@ -124,6 +130,32 @@ export default function QuizPage() {
     [syllabus, subject],
   );
 
+  /** Practice: fetch questions and answer them one at a time, with the
+   *  result shown immediately. No session row and no clock -- those
+   *  belong to the quiz flow, which this sits beside rather than
+   *  replaces. */
+  const startPractice = async () => {
+    setStarting(true);
+    setError(null);
+    try {
+      const items = await fetchQuiz({
+        subject_slug: subject,
+        topic_slug: topic === "all" ? undefined : topic,
+        question_type: type === "all" ? undefined : type,
+        limit: count,
+      });
+      if (items.length === 0) {
+        setError("No questions matched those filters.");
+        return;
+      }
+      setPractice(items);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load questions.");
+    } finally {
+      setStarting(false);
+    }
+  };
+
   const launch = async () => {
     setStarting(true);
     setError(null);
@@ -151,15 +183,55 @@ export default function QuizPage() {
     boxShadow: active ? "var(--shadow-sm)" : "none",
   });
 
+  if (practice) {
+    return (
+      <PracticeRunner questions={practice} onExit={() => setPractice(null)} />
+    );
+  }
+
   return (
     <div className="space-y-5">
-      <header>
-        <h1 className="text-lg font-extrabold sm:text-xl" style={{ color: "var(--ink)" }}>
-          Quiz Drill
-        </h1>
-        <p className="text-[11px] font-semibold" style={{ color: "var(--ink-faint)" }}>
-          Short practice with the answer and explanation after each question.
-        </p>
+      <header className="space-y-3">
+        <div>
+          <h1 className="text-lg font-extrabold sm:text-xl" style={{ color: "var(--ink)" }}>
+            Questions
+          </h1>
+          <p className="text-[11px] font-semibold" style={{ color: "var(--ink-faint)" }}>
+            {mode === "practice"
+              ? "One at a time, with the answer shown as you go."
+              : "Answer everything, submit once, review at the end."}
+          </p>
+        </div>
+
+        {/* The mode decides what the single action button does. Two
+            buttons at the bottom made the difference between the flows
+            look like a detail of starting, when it is the choice the
+            whole page is about. */}
+        <div className="flex gap-1 rounded-[var(--radius-pill)] p-0.5"
+             style={{ background: "var(--surface-sunk)",
+                      border: "var(--line-width) solid var(--line)",
+                      width: "fit-content" }}>
+          {([
+            { key: "practice" as const, label: "Practice", icon: GraduationCap,
+              hint: "See the answer straight after each question" },
+            { key: "quiz" as const, label: "Quiz", icon: Play,
+              hint: "Submit once at the end, like the exam" },
+          ]).map(({ key, label, icon: Icon, hint }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setMode(key)}
+              title={hint}
+              className="flex items-center gap-1.5 rounded-[var(--radius-pill)] px-4 py-1.5 text-[12px] font-extrabold"
+              style={mode === key
+                ? { background: "var(--accent)", color: "var(--ink)" }
+                : { background: "transparent", color: "var(--ink-faint)" }}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {label}
+            </button>
+          ))}
+        </div>
       </header>
 
       {error && (
@@ -288,15 +360,20 @@ export default function QuizPage() {
 
         <button
           type="button"
-          onClick={launch}
+          onClick={mode === "practice" ? startPractice : launch}
           disabled={starting || !subject || subjectQuestionCount === 0}
+          title="Answer everything, then submit once and review"
           className="flex min-h-12 w-full items-center justify-center gap-2 rounded-[var(--radius-pill)] text-sm font-extrabold disabled:opacity-50 sm:w-auto sm:px-8"
           style={{ background: "var(--accent)", color: "var(--ink)",
                    border: "var(--line-width) solid var(--line)",
                    boxShadow: "var(--shadow)" }}
         >
-          <Play className="h-4 w-4" />
-          {starting ? "Preparing questions..." : "Start quiz"}
+          {mode === "practice"
+            ? <GraduationCap className="h-4 w-4" />
+            : <Play className="h-4 w-4" />}
+          {starting
+            ? "Preparing questions..."
+            : mode === "practice" ? "Start practice" : "Start quiz"}
         </button>
 
         {subject && subjectQuestionCount === 0 && (

@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     # let a deployed instance reach the same database.
     POSTGRESQL_AIVEN_URI: str = ""
 
+    #: Neon. Use the **-pooler** hostname: a serverless function opens a
+    #: connection per invocation, and routing through their PgBouncer is
+    #: what keeps a hundred concurrent Lambdas from exhausting the
+    #: compute's max_connections. The direct hostname works locally and
+    #: fails under load, which is the worst way to find out.
+    NEON_DATABASE_URL: str = ""
+
     # Which backend to prefer when more than one is configured:
     # "aiven", "local" or "sqlite".
     DB_TARGET: str = "local"
@@ -47,6 +54,44 @@ class Settings(BaseSettings):
     #: than falling back to a default that would let anyone forge a token
     #: for any account -- a weak default here is worse than no auth.
     JWT_SECRET: str = ""
+
+    #: Set by AWS Lambda itself, not by us -- its presence is how the app
+    #: knows it is running serverless, which changes connection pooling
+    #: and disables anything that assumes a long-lived process. Bound to
+    #: the real variable name via alias, since pydantic matches on the
+    #: field name otherwise and would never see it.
+    AWS_LAMBDA_FUNCTION_NAME: str = ""
+
+    #: The Lambda function that runs background jobs. Required when
+    #: deployed: without it there is nowhere to send an import, and the
+    #: API would accept the request and drop the work.
+    WORKER_FUNCTION_NAME: str = ""
+
+    #: S3 bucket for uploaded files awaiting a background job. Empty uses
+    #: a temp directory, which is correct locally and wrong on Lambda,
+    #: where the API and worker have separate /tmp.
+    UPLOAD_BUCKET: str = ""
+
+    #: When the exam is. GATE 2027 runs 6-21 February 2027 (IIT Madras);
+    #: the branch-wise date is not published yet, so the first exam day
+    #: is the conservative target. Configurable because it slips, and a
+    #: pace calculation against a wrong date is worse than none.
+    EXAM_DATE: str = "2027-02-06"
+
+    # ---- Fallback model ----
+    #: A second provider used only when Gemini returns 429
+    #: RESOURCE_EXHAUSTED. Any OpenAI-compatible endpoint works -- Groq,
+    #: Mistral, Together, OpenRouter -- so changing provider is a base
+    #: URL and a model name here, not a code change.
+    #:
+    #: Empty disables the fallback entirely: a quota error then surfaces
+    #: as it did before, rather than silently doing nothing.
+    FALLBACK_API_KEY: str = ""
+    FALLBACK_BASE_URL: str = "https://api.groq.com/openai/v1"
+    #: Groq's gpt-oss and qwen3.8 models support strict JSON schema, which
+    #: the generation pipeline needs; a model without it degrades to
+    #: json_object and best-effort shape adherence.
+    FALLBACK_MODEL: str = "openai/gpt-oss-120b"
 
     # ---- Google sign-in ----
     #: From the Google Cloud console, OAuth 2.0 Client ID of type "Web
@@ -140,6 +185,10 @@ class Settings(BaseSettings):
         if self.DATABASE_URL.strip():
             return self._normalise_dsn(self.DATABASE_URL)
 
+        neon = self._normalise_dsn(self.NEON_DATABASE_URL)
+        if self.DB_TARGET == "neon" and neon:
+            return neon
+
         aiven = self._normalise_dsn(self.POSTGRESQL_AIVEN_URI)
         if self.DB_TARGET == "aiven" and aiven:
             return aiven
@@ -152,8 +201,13 @@ class Settings(BaseSettings):
         url = self.resolved_database_url
         if url.startswith("sqlite"):
             return "sqlite"
-        return "aiven" if self.POSTGRESQL_AIVEN_URI.strip() and \
-            self._normalise_dsn(self.POSTGRESQL_AIVEN_URI) == url else "local-postgres"
+        if self.NEON_DATABASE_URL.strip() and \
+                self._normalise_dsn(self.NEON_DATABASE_URL) == url:
+            return "neon"
+        if self.POSTGRESQL_AIVEN_URI.strip() and \
+                self._normalise_dsn(self.POSTGRESQL_AIVEN_URI) == url:
+            return "aiven"
+        return "local-postgres"
 
     @property
     def gemini_configured(self) -> bool:

@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -9,6 +10,9 @@ from ..core.database import get_db
 from ..models.models import Question, Subject, Topic, Attempt, MistakeRegistry
 
 from ..models.users import User
+from ..services.activity import record
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/quiz", tags=["Quiz"])
 
@@ -54,6 +58,9 @@ def get_quiz_questions(
             "id": q.id,
             "subject_name": q.subject.name,
             "subject_slug": q.subject.slug,
+            # Chapter sits between subject and topic; practice shows the
+            # full path so a question's place in the syllabus is visible.
+            "chapter_name": q.topic.chapter.name if q.topic.chapter else None,
             "topic_name": q.topic.name,
             "topic_slug": q.topic.slug,
             "question_type": q.question_type,
@@ -63,7 +70,9 @@ def get_quiz_questions(
             "options": opts,
             "difficulty": q.difficulty,
             "source": q.source,
-            "is_pyq": q.is_pyq
+            "is_pyq": q.is_pyq,
+            "exam_year": q.exam_year,
+            "exam_set": q.exam_set,
         })
     return result
 
@@ -124,7 +133,15 @@ def submit_answer(payload: AnswerSubmission, db: Session = Depends(get_db),
         created_at=datetime.utcnow()
     )
     db.add(attempt)
-    
+
+    # Same transaction as the attempt: either both land or neither does,
+    # so the log cannot claim an answer that was rolled back.
+    record.record_attempt(
+        db, user_id=user.id, question=q, is_correct=is_correct,
+        marks=marks_awarded, seconds=payload.time_spent_seconds,
+        mode=payload.mode,
+    )
+
     # Update MistakeRegistry
     if not is_correct:
         mistake = db.query(MistakeRegistry).filter(
@@ -259,3 +276,104 @@ def review_mistakes(
         }
         for mistake, question, subject, topic in rows
     ]
+
+
+class GenerateSolutionRequest(BaseModel):
+    """Nothing to send; the question id is in the path."""
+
+
+@router.post("/{question_id}/solution/generate")
+def generate_solution(question_id: int, db: Session = Depends(get_db),
+                      user: User = Depends(current_user)):
+    """Write a solution for a question that has none.
+
+    Only 753 of 1,953 questions carry an explanation, so "no solution
+    recorded" is the common case and the student is told so plainly. This
+    is the opt-in escape: they ask, and one is generated.
+
+    Deliberately routed to the fallback provider rather than Gemini. The
+    free Gemini key is the one that returns 429 and that the feed, the
+    assistant and card generation all depend on; spending it on a
+    solution the student asked for mid-practice would starve the paths
+    they did not ask about. The fallback answers in about a second and
+    has its own budget.
+
+    Refuses before an attempt exists, for the same reason the solution
+    endpoint does: reading the answer first turns practice into reading.
+    """
+    question = db.query(Question).filter(Question.id == question_id).first()
+    if question is None:
+        raise HTTPException(404, "Question not found")
+
+    attempted = (
+        db.query(Attempt.id)
+        .filter(Attempt.question_id == question_id,
+                Attempt.user_id == user.id)
+        .first()
+    )
+    if not attempted:
+        raise HTTPException(
+            409, "Attempt this question before generating its solution.")
+
+    if (question.explanation or "").strip():
+        # Already has one; hand it back rather than spending a call to
+        # produce a second opinion.
+        return {
+            "question_id": question_id,
+            "explanation": question.explanation,
+            "solution_source": question.solution_source or "book",
+            "generated": False,
+        }
+
+    from ..ai import fallback
+
+    if not fallback.configured():
+        raise HTTPException(
+            503,
+            "No solution is recorded for this question, and no fallback "
+            "model is configured to generate one.",
+        )
+
+    options = ""
+    if question.options:
+        try:
+            parsed = json.loads(question.options)
+            options = "\n".join(
+                f"{o.get('id')}. {o.get('text')}" for o in parsed
+            )
+        except (ValueError, TypeError, AttributeError):
+            options = ""
+
+    prompt = (
+        f"GATE CSE question on {question.subject.name} / "
+        f"{question.topic.name}.\n\n"
+        f"{question.content}\n\n{options}\n\n"
+        f"The correct answer is: {question.correct_answer}\n\n"
+        "Explain why, in under 150 words. Show the reasoning or working "
+        "that leads to it. Do not restate the question."
+    )
+
+    try:
+        text_out = fallback.generate_text(
+            prompt,
+            system_instruction=(
+                "You are a GATE CSE tutor. Be precise and brief. State the "
+                "reasoning, not encouragement."
+            ),
+        )
+    except Exception as exc:
+        logger.warning("Solution generation failed for %s: %s",
+                       question_id, exc)
+        raise HTTPException(
+            502, "Could not generate a solution just now.") from exc
+
+    question.explanation = text_out
+    question.solution_source = "ai"
+    db.commit()
+
+    return {
+        "question_id": question_id,
+        "explanation": text_out,
+        "solution_source": "ai",
+        "generated": True,
+    }

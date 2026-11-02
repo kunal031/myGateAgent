@@ -26,13 +26,14 @@ import base64
 import hashlib
 import logging
 import secrets
-import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 import httpx
 import jwt
 from jwt import PyJWKClient
 
+from ..models.oauth import PendingOAuth
 from .config import settings
 from .security import AuthError
 
@@ -73,68 +74,87 @@ class PendingLogin:
     `verifier` is the PKCE secret; it stays here and is sent only to
     Google's token endpoint, never through the browser. `next_url` is where
     the user was headed before being asked to sign in.
+
+    `created_at` is a naive UTC datetime, matching what the database
+    stores. It is deliberately not an epoch float: converting a naive UTC
+    datetime with .timestamp() reinterprets it as local time, which on a
+    machine in IST made every attempt look 19,800 seconds old and expire
+    the instant it was created.
     """
 
     verifier: str
-    created_at: float
+    created_at: datetime
     next_url: str = ""
 
     @property
     def expired(self) -> bool:
-        return time.time() - self.created_at > STATE_TTL_SECONDS
+        age = datetime.utcnow() - self.created_at
+        return age.total_seconds() > STATE_TTL_SECONDS
 
 
 class LoginStore:
-    """In-memory store of pending sign-ins, keyed by the state parameter.
+    """Pending sign-ins, keyed by the state parameter.
 
-    Deliberately in-process, and the reason is worth stating because it is
-    the same seam the rate limiter and OCR cache sit on: with two API
-    containers, a sign-in begun on one and completed on the other finds no
-    state and fails. The fix is Redis, which this application already runs
-    for exactly that class of state. Until the API is actually replicated,
-    a dict avoids a network round trip on every sign-in.
+    Backed by the `pending_oauth` table rather than a dict, because the
+    verifier has to survive between the redirect request and the callback
+    — two separate invocations, which on Lambda are two separate
+    processes. An in-memory dict there fails only when the two land on
+    different instances, which is to say intermittently and never while
+    you are testing it.
 
-    Entries are swept on write rather than by a timer, so an abandoned
-    attempt cannot accumulate -- there is no background task to forget to
-    start, and the cost is bounded by how often anyone signs in.
+    Entries are swept on write rather than by a timer: there is no
+    background task to forget to start, and the cost is bounded by how
+    often anyone signs in.
     """
 
-    def __init__(self) -> None:
-        self._pending: dict[str, PendingLogin] = {}
-
-    def issue(self, next_url: str = "") -> tuple[str, str, str]:
+    def issue(self, db, next_url: str = "") -> tuple[str, str, str]:
         """Create a state, verifier and challenge for a new attempt."""
-        self._sweep()
+        self._sweep(db)
 
-        # 32 bytes from the OS CSPRNG. `secrets` rather than `random`:
-        # a predictable state parameter is a CSRF hole, and a predictable
-        # verifier defeats PKCE entirely.
+        # 32 bytes from the OS CSPRNG. `secrets` rather than `random`: a
+        # predictable state is a CSRF hole, and a predictable verifier
+        # defeats PKCE entirely.
         state = _b64url(secrets.token_bytes(32))
         verifier = _b64url(secrets.token_bytes(32))
         challenge = _b64url(hashlib.sha256(verifier.encode("ascii")).digest())
 
-        self._pending[state] = PendingLogin(
-            verifier=verifier, created_at=time.time(), next_url=next_url
-        )
+        db.add(PendingOAuth(state=state, verifier=verifier,
+                            next_url=next_url[:512]))
+        db.commit()
         return state, verifier, challenge
 
-    def consume(self, state: str) -> PendingLogin:
-        """Take an attempt, removing it.
+    def consume(self, db, state: str) -> PendingLogin:
+        """Take an attempt, deleting it.
 
-        Single-use: popping rather than reading means a replayed callback
-        finds nothing, so an intercepted authorisation code cannot be
-        redeemed twice.
+        Single-use by construction: the row is removed, so a replayed
+        callback finds nothing and an intercepted code cannot be redeemed
+        twice.
         """
-        pending = self._pending.pop(state, None)
-        if pending is None:
+        row = (
+            db.query(PendingOAuth)
+            .filter(PendingOAuth.state == state)
+            .first()
+        )
+        if row is None:
             raise AuthError("That sign-in attempt is unknown or already used")
+
+        pending = PendingLogin(
+            verifier=row.verifier,
+            created_at=row.created_at,
+            next_url=row.next_url or "",
+        )
+        db.delete(row)
+        db.commit()
+
         if pending.expired:
             raise AuthError("That sign-in attempt timed out; please try again")
         return pending
 
-    def _sweep(self) -> None:
-        for key in [k for k, v in self._pending.items() if v.expired]:
-            self._pending.pop(key, None)
+    def _sweep(self, db) -> None:
+        cutoff = datetime.utcnow() - timedelta(seconds=STATE_TTL_SECONDS)
+        db.query(PendingOAuth).filter(
+            PendingOAuth.created_at < cutoff
+        ).delete(synchronize_session=False)
 
 
 login_store = LoginStore()
@@ -169,11 +189,11 @@ def safe_next(next_url: str) -> str:
     return next_url[:512]
 
 
-def authorization_url(next_url: str = "") -> str:
+def authorization_url(db, next_url: str = "") -> str:
     """Build the URL that sends the browser to Google."""
     from urllib.parse import urlencode
 
-    state, _verifier, challenge = login_store.issue(safe_next(next_url))
+    state, _verifier, challenge = login_store.issue(db, safe_next(next_url))
 
     return AUTH_ENDPOINT + "?" + urlencode({
         "client_id": settings.GOOGLE_CLIENT_ID,

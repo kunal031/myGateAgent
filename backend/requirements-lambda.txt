@@ -1,0 +1,47 @@
+# Dependencies for the deployed functions.
+#
+# Separate from requirements.txt because that file also carries the
+# ingestion toolchain -- gdown, python-docx, python-pptx -- which only
+# the local CLIs use. Embedding a book takes hours against Lambda's
+# 15-minute ceiling, so ingestion never runs there and shipping its
+# dependencies would spend a third of the 250 MB unzipped limit on code
+# that cannot execute.
+#
+# pymupdf stays. It is imported lazily inside import_paper_pdf, so a
+# naive import scan reports it unused -- it is not. The worker needs it
+# to read an uploaded question paper.
+#
+# boto3 is provided by the Lambda runtime and deliberately omitted here;
+# it stays pinned in requirements.txt for local runs.
+#
+# This file is the API's dependencies. The worker additionally needs the
+# document toolchain (requirements-lambda-worker.txt), which is 92 MB of
+# pymupdf, lxml and Pillow that no API route touches. Shipping one set to
+# both put the package at 230 MB against a 250 MB limit -- close enough
+# that a single dependency update would have broken the deploy.
+
+# ---- Web ----
+fastapi==0.142.2
+pydantic==2.13.5
+pydantic-settings==2.15.0
+python-multipart==0.0.32
+mangum==0.19.0
+
+# ---- Auth ----
+PyJWT==2.12.1
+cryptography==50.0.2
+bcrypt==5.0.0
+email-validator==2.3.0
+
+# ---- Database ----
+SQLAlchemy==2.1.3
+psycopg[binary]==3.3.6
+pgvector==0.5.1
+
+# ---- AI ----
+google-genai==2.29.0
+numpy==2.4.6
+tenacity==9.1.4
+
+httpx==0.28.1
+python-dotenv==1.2.4

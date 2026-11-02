@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { X, Zap } from "lucide-react";
 
+import ProfileMenu from "../profile/ProfileMenu";
 import ThemeSwitcher from "../theme/ThemeSwitcher";
 import { NAV_ITEMS, isActivePath } from "./nav-items";
 
@@ -113,8 +114,20 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
           })}
         </nav>
 
+        {/* Theme and account are separate concerns, so they get their own
+            rows with a divider between rather than sitting shoulder to
+            shoulder where the avatar reads as part of the theme control. */}
         <div className="p-3">
           <ThemeSwitcher />
+        </div>
+
+        <div className="flex items-center justify-between gap-3 px-3 pb-3 pt-3"
+             style={{ borderTop: "var(--line-width) solid var(--line)" }}>
+          <span className="truncate text-[11px] font-semibold"
+                style={{ color: "var(--ink-faint)" }}>
+            Account
+          </span>
+          <ProfileMenu placement="above" />
         </div>
       </aside>
     </>

@@ -11,6 +11,7 @@ import ConceptPopover from "./ConceptPopover";
 import MathText from "@/components/MathText";
 import { FeedCardItem } from "@/lib/api";
 import { variantFor } from "./card-variants";
+import ActionHint from "./ActionHint";
 
 const TYPE_META: Record<string, { label: string; icon: LucideIcon }> = {
   TRAP: { label: "TRAP", icon: AlertTriangle },
@@ -24,6 +25,8 @@ interface Props {
   onMastered: (id: number) => void;
   /** Opens the assistant with this card already in context. */
   onExplain: (card: FeedCardItem) => void;
+  /** Mark the whole concept, not just this card. */
+  onMarkConcept?: (conceptId: number, action: "learn" | "revise") => void;
   /** Only passed for cards the student wrote; generated ones are fixed. */
   onEdit?: (card: FeedCardItem) => void;
   onDelete?: (card: FeedCardItem) => void;
@@ -32,7 +35,8 @@ interface Props {
 }
 
 export default function FeedCard({
-  card, onMastered, onExplain, onEdit, onDelete, leaving = false,
+  card, onMastered, onExplain, onMarkConcept, onEdit, onDelete,
+  leaving = false,
 }: Props) {
   const meta = TYPE_META[card.card_type] ?? TYPE_META.CONCEPT;
   const Icon = meta.icon;
@@ -158,30 +162,76 @@ export default function FeedCard({
         className="flex items-stretch"
         style={{ borderTop: "var(--line-width) solid var(--line)" }}
       >
-        <button
-          type="button"
-          onClick={() => onMastered(card.id)}
-          className="flex min-h-11 flex-1 items-center justify-center gap-1.5 text-[13px] font-bold transition-colors"
-          style={{ color: "var(--ink)" }}
-          aria-label={`Mark ${card.title} as read`}
-        >
-          <Check className="h-3.5 w-3.5" />
-          Got it
-        </button>
+        {/* Wording says what each one changes, because the difference
+            between them is not guessable: "Got it" is about this card,
+            L and R are about the whole concept behind it. */}
+        <ActionHint grow
+          label="This card is learned — hide it and bring it back for review later">
+          <button
+            type="button"
+            onClick={() => onMastered(card.id)}
+            title="This card is learned — hide it and review it later"
+            className="flex min-h-11 flex-1 items-center justify-center gap-1.5 text-[13px] font-bold transition-colors"
+            style={{ color: "var(--ink)" }}
+            aria-label={`Mark ${card.title} as read`}
+          >
+            <Check className="h-3.5 w-3.5" />
+            Got it
+          </button>
+        </ActionHint>
 
-        <button
-          type="button"
-          onClick={() => onExplain(card)}
-          aria-label={`Explain ${card.title}`}
-          className="flex min-h-11 flex-1 items-center justify-center gap-1.5 text-[13px] font-bold"
-          style={{
-            color: "var(--ink)",
-            borderLeft: "var(--line-width) solid var(--line)",
-          }}
-        >
-          <MessageCircleQuestion className="h-3.5 w-3.5" />
-          Explain
-        </button>
+        {card.concept_id != null && onMarkConcept && (
+          <>
+            <ActionHint label="Learned — mark the whole concept known, without going through its other cards">
+              <button
+                type="button"
+                onClick={() => onMarkConcept(card.concept_id as number, "learn")}
+                title="Learned — mark the whole concept known"
+                aria-label={`Mark the concept behind ${card.title} as learned`}
+                className="flex min-h-11 w-11 items-center justify-center text-[13px] font-extrabold"
+                style={{
+                  color: "var(--ink)",
+                  borderLeft: "var(--line-width) solid var(--line)",
+                }}
+              >
+                L
+              </button>
+            </ActionHint>
+            <ActionHint label="Revised — you have been back over this concept; counts towards your revision streak">
+              <button
+                type="button"
+                onClick={() => onMarkConcept(card.concept_id as number, "revise")}
+                title="Revised — you have been back over this concept"
+                aria-label={`Mark the concept behind ${card.title} as revised`}
+                className="flex min-h-11 w-11 items-center justify-center text-[13px] font-extrabold"
+                style={{
+                  color: "var(--ink)",
+                  borderLeft: "var(--line-width) solid var(--line)",
+                }}
+              >
+                R
+              </button>
+            </ActionHint>
+          </>
+        )}
+
+        <ActionHint grow
+          label="Ask the AI about this card — a deeper explanation, or anything you want to follow up. Changes no progress.">
+          <button
+            type="button"
+            onClick={() => onExplain(card)}
+            title="Ask the AI about this card"
+            aria-label={`Explain ${card.title}`}
+            className="flex min-h-11 flex-1 items-center justify-center gap-1.5 text-[13px] font-bold"
+            style={{
+              color: "var(--ink)",
+              borderLeft: "var(--line-width) solid var(--line)",
+            }}
+          >
+            <MessageCircleQuestion className="h-3.5 w-3.5" />
+            Explain
+          </button>
+        </ActionHint>
 
         {mine && onEdit && onDelete ? (
           <>

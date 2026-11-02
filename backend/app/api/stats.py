@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from ..core.auth import current_user
@@ -208,3 +208,134 @@ def insights(db: Session = Depends(get_db),
     order = {"high": 0, "medium": 1, "low": 2}
     found.sort(key=lambda i: order.get(i["severity"], 3))
     return {"insights": found, "count": len(found)}
+
+
+# ----------------------------------------------------- hierarchy drill-down
+
+@router.get("/breakdown")
+def breakdown_subjects(view: str = "fix",
+                       db: Session = Depends(get_db),
+                       user: User = Depends(current_user)):
+    """Every subject, heaviest first.
+
+    The top of the drill-down. Chapters are fetched only when a row is
+    opened, so loading this page does not compute 39 chapters, 57 topics
+    and 282 concepts the student will not look at.
+    """
+    from ..services.analytics import breakdown as brk
+
+    rows = brk.subject_breakdown(db, user.id)
+    # The concept count for the chosen state, so one table carries both
+    # what was attempted and what is left to learn.
+    try:
+        counts = brk.concept_state_counts(db, user.id, view)["subject"]
+    except ValueError:
+        counts = {}
+    for row in rows:
+        row["concepts_in_state"] = counts.get(row["id"], 0)
+    return rows
+
+
+@router.get("/breakdown/{level}/{node_id}")
+def breakdown_children(level: str, node_id: int, view: str = "fix",
+                       db: Session = Depends(get_db),
+                       user: User = Depends(current_user)):
+    """The children of any node, at any level.
+
+    One endpoint rather than one per level, because every level returns
+    the same node shape: the client walks the tree with `level` and `id`
+    taken straight off the node it is expanding, instead of choosing a
+    different URL and a different type at each depth.
+
+    The level named is the *parent's* -- asking for the children of a
+    subject returns chapters.
+    """
+    from ..services.analytics import breakdown as brk
+
+    fetch = {
+        "subject": brk.chapter_breakdown,
+        "chapter": brk.topic_breakdown,
+        "topic": brk.concept_breakdown,
+    }.get(level)
+
+    if fetch is None:
+        raise HTTPException(
+            404,
+            f"Cannot expand {level!r}. Expandable levels are: "
+            "subject, chapter, topic.",
+        )
+
+    rows = fetch(db, node_id, user.id)
+    child_level = {"subject": "chapter", "chapter": "topic",
+                   "topic": "concept"}[level]
+    if child_level != "concept":
+        try:
+            counts = brk.concept_state_counts(db, user.id, view)[child_level]
+        except ValueError:
+            counts = {}
+        for row in rows:
+            row["concepts_in_state"] = counts.get(row["id"], 0)
+    return rows
+
+
+# ------------------------------------------------------------- calendar
+
+@router.get("/calendar")
+def activity_calendar(days: int = 365,
+                      db: Session = Depends(get_db),
+                      user: User = Depends(current_user)):
+    """Day-level activity totals for the heatmap, plus streaks."""
+    from ..services.analytics import calendar as cal
+    return cal.activity_calendar(db, user.id, days=max(1, min(days, 730)))
+
+
+@router.get("/calendar/{on}")
+def activity_day(on: str,
+                 db: Session = Depends(get_db),
+                 user: User = Depends(current_user)):
+    """Everything done on one day, grouped subject -> chapter -> topic."""
+    from datetime import date as _date
+
+    from ..services.analytics import calendar as cal
+    try:
+        parsed = _date.fromisoformat(on)
+    except ValueError:
+        raise HTTPException(400, "Date must be in YYYY-MM-DD form") from None
+    return cal.day_report(db, user.id, parsed)
+
+
+@router.get("/concepts/{view}")
+def concept_rollup(view: str,
+                   db: Session = Depends(get_db),
+                   user: User = Depends(current_user)):
+    """Concepts in one state, grouped subject -> chapter -> topic.
+
+    `view` is one of: fix (untouched or still learning), learned, revised.
+
+    The drill-down answers "how am I doing in Operating Systems". This
+    answers the other direction -- "where are the concepts I still have
+    to fix" -- over the same hierarchy.
+    """
+    from ..services.analytics import breakdown as brk
+    try:
+        return brk.concept_rollup(db, user.id, view)
+    except ValueError as exc:
+        raise HTTPException(
+            404, f"{exc}. Views are: fix, learned, revised.") from exc
+
+
+@router.get("/coverage")
+def coverage(db: Session = Depends(get_db),
+             user: User = Depends(current_user)):
+    """How much of the syllabus has been touched, and what to open next.
+
+    One request for the top of the analytics page: accuracy on 1% of the
+    syllabus is not the headline, coverage is.
+    """
+    from ..services.analytics import performance as perf
+    return {
+        "coverage": perf.coverage(db, user.id),
+        "next_action": perf.next_action(db, user.id),
+        "readiness": perf.exam_readiness(db, user.id),
+        "pace": perf.pace_to_exam(db, user.id),
+    }

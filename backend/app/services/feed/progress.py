@@ -218,3 +218,63 @@ def backfill_from_card_views(db: Session, *, user_id: int | None) -> int:
         record_card_recalled(db, card, user_id=user_id)
     db.commit()
     return len(seen)
+
+
+def mark_concept(
+    db: Session, concept_id: int, *, user_id: int | None, action: str,
+) -> ConceptProgress:
+    """Mark a concept learned or revised, on the student's own judgement.
+
+    Distinct from `record_card_recalled`, which infers status from whether
+    every card in the concept has been recalled. That inference is right
+    for passive reading but cannot express "I already know this" -- a
+    student who learned semaphores from a book should not have to click
+    through six cards to say so.
+
+    So this sets the status directly:
+
+    * **learn** moves anything below LEARNED up to LEARNED, and leaves
+      REVISED or MASTERED alone -- marking learned must never demote work
+      already further along.
+    * **revise** moves LEARNED to REVISED and counts the revision.
+      Revising from NOT_STARTED is allowed and passes through LEARNED,
+      since revising something implies having learned it.
+
+    Revision count and timestamp drive the spaced-repetition schedule, so
+    they are updated on every revise rather than only on a transition.
+    """
+    progress = get_or_create(db, concept_id, user_id=user_id)
+    now = datetime.utcnow()
+    progress.last_seen_at = now
+
+    if action == "learn":
+        # Never demote: a concept already revised or mastered stays there.
+        if progress.status in (ConceptStatus.NOT_STARTED,
+                               ConceptStatus.LEARNING):
+            progress.status = ConceptStatus.LEARNED
+    elif action == "revise":
+        if progress.status in (ConceptStatus.NOT_STARTED,
+                               ConceptStatus.LEARNING,
+                               ConceptStatus.LEARNED):
+            progress.status = ConceptStatus.REVISED
+        progress.revision_count = (progress.revision_count or 0) + 1
+        progress.last_revised_at = now
+    else:
+        raise ValueError(f"Unknown action {action!r}; use 'learn' or 'revise'")
+
+    return progress
+
+
+def unmark_concept(
+    db: Session, concept_id: int, *, user_id: int | None,
+) -> ConceptProgress:
+    """Undo a mark, dropping the concept back to LEARNING.
+
+    Not to NOT_STARTED: the cards have still been seen, and claiming
+    otherwise would lose that. This exists because a mis-tap on a small
+    button is easy and an unreversible one is worse than no button.
+    """
+    progress = get_or_create(db, concept_id, user_id=user_id)
+    progress.status = ConceptStatus.LEARNING
+    progress.last_seen_at = datetime.utcnow()
+    return progress

@@ -22,11 +22,26 @@ class Topic(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
+
+    # Nullable: a topic with no chapter is shown under "Unassigned" rather
+    # than dropping out of the breakdown, so a mapping gap stays visible.
+    chapter_id = Column(Integer, ForeignKey("syllabus_chapters.id"),
+                        nullable=True, index=True)
+
     name = Column(String(150), nullable=False)
     slug = Column(String(150), index=True, nullable=False)
     importance = Column(String(20), default="High")  # High, Medium, Core
 
+    # Study order within the chapter. Previously the only ordering lived in
+    # data/curriculum.py, so every consumer had to sort by hand or get it
+    # wrong -- feed, quiz and analytics each ordered differently.
+    sequence = Column(Integer, default=0, index=True)
+
     subject = relationship("Subject", back_populates="topics")
+    # Module-qualified: syllabus.py defines a second, unused Chapter,
+    # and a bare "Chapter" is ambiguous in the registry.
+    chapter = relationship("app.models.chapters.Chapter",
+                           foreign_keys=[chapter_id], overlaps="topics")
     questions = relationship("Question", back_populates="topic")
     feed_cards = relationship("FeedCard", back_populates="topic")
 
@@ -56,6 +71,12 @@ class Question(Base):
     # or SEED (hand-authored).
     origin = Column(String(20), default="SEED", index=True)
     exam_year = Column(Integer, nullable=True, index=True)
+
+    #: Which sitting of that year, e.g. "Set 1" or "Forenoon". GATE runs
+    #: more than one session per year and the papers differ, so a PYQ is
+    #: only fully identified by year *and* set. Nullable: a textbook
+    #: question has no sitting, and most older papers did not record one.
+    exam_set = Column(String(40), nullable=True, index=True)
 
     provenance = Column(Text, default="")
     source_chunk_ids = Column(String(200), default="")

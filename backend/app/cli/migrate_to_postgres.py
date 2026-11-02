@@ -23,8 +23,22 @@ from ..core.database import Base
 from .. import models  # noqa: F401  (register every table)
 
 # Parents before children, so foreign keys resolve as rows land.
+# Parent before child throughout: every table here is inserted in this
+# order, so a foreign key always finds its target already present.
+#
+# Checked against the live schema by `audit_tables()` before any copy
+# runs. An earlier version of this list was four tables short -- users,
+# syllabus_chapters, activity_events and pending_oauth -- and a copy made
+# with it would have silently left the target with no accounts and no
+# chapter layer, which is exactly the kind of loss that looks like a
+# successful migration.
 TABLE_ORDER = [
-    "subjects", "topics", "concepts",
+    # Accounts first: almost everything below carries user_id.
+    "users",
+    "subjects",
+    # The chapter layer sits between subjects and topics.
+    "syllabus_chapters", "topics", "concepts",
+    # The older, unpopulated taxonomy. Copied for completeness; all empty.
     "chapters", "syllabus_topics", "subtopics", "syllabus_concepts",
     "sources", "source_chunks",
     # Papers precede questions: a question carries paper_id.
@@ -34,6 +48,10 @@ TABLE_ORDER = [
     "card_views",
     "exam_sessions", "exam_items",
     "assistant_threads", "assistant_messages",
+    "activity_events",
+    # In-flight sign-ins. Copied so the list is exhaustive; rows are
+    # short-lived and almost always zero.
+    "pending_oauth",
 ]
 
 # Postgres rejects a text value in a halfvec column, so the embedding is
@@ -258,12 +276,39 @@ def create_indexes(target_engine) -> None:
         ))
 
 
+def audit_tables(source_engine) -> list[str]:
+    """Tables present in the source but absent from TABLE_ORDER.
+
+    Run before every copy. A table missing from the list is not an error
+    the copy reports -- it simply never gets copied, and the target looks
+    complete. That is how a previous resync lost the users table without
+    anything failing.
+    """
+    with source_engine.connect() as conn:
+        live = {
+            row[0] for row in conn.execute(text(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'public'"
+            ))
+        }
+    return sorted(live - set(TABLE_ORDER))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--postgres-url", default=None,
                         help="target DSN; defaults to POSTGRES_URL")
     parser.add_argument("--to-aiven", action="store_true",
                         help="target POSTGRESQL_AIVEN_URI instead")
+    parser.add_argument("--to-neon", action="store_true",
+                        help="target NEON_DATABASE_URL from .env. Preferred "
+                             "over --to-url, which puts the password in the "
+                             "process list where any local user can read it.")
+    parser.add_argument("--to-url", default=None,
+                        help="target any Postgres DSN. Note the DSN appears "
+                             "in `ps` output for the life of the run, so "
+                             "prefer --to-neon or an env var for anything "
+                             "with a live password in it.")
     parser.add_argument("--from-local", action="store_true",
                         help="read local Postgres instead of SQLite; required "
                              "to resync a cloud copy, since the SQLite file "
@@ -282,10 +327,18 @@ def main() -> None:
     aiven = settings._normalise_dsn(settings.POSTGRESQL_AIVEN_URI)
     local = settings._normalise_dsn(settings.POSTGRES_URL)
 
-    if args.from_aiven and args.to_aiven:
-        raise SystemExit("Pick one direction: --to-aiven or --from-aiven")
+    if args.from_aiven and (args.to_aiven or args.to_url or args.to_neon):
+        raise SystemExit(
+            "Pick one direction: --to-aiven/--to-neon/--to-url or --from-aiven"
+        )
 
-    if args.to_aiven:
+    if args.to_neon:
+        target_url = settings._normalise_dsn(settings.NEON_DATABASE_URL)
+        if not target_url:
+            raise SystemExit("NEON_DATABASE_URL is not set in backend/.env")
+    elif args.to_url:
+        target_url = settings._normalise_dsn(args.to_url)
+    elif args.to_aiven:
         target_url = aiven
         if not target_url:
             raise SystemExit(
@@ -320,6 +373,19 @@ def main() -> None:
 
     print(f"source: {_safe(source_url or settings.SQLITE_URL)}")
     print(f"target: {_safe(target_url)}\n")
+
+    # Before anything is written. A table missing from TABLE_ORDER is not
+    # reported by the copy -- it is simply skipped, and the target looks
+    # complete. Refusing here is the difference between a loud stop and a
+    # migration that quietly leaves the target without its users.
+    if source_engine is not None:
+        unlisted = audit_tables(source_engine)
+        if unlisted:
+            raise SystemExit(
+                "These source tables are missing from TABLE_ORDER and would "
+                "not be copied:\n  " + "\n  ".join(unlisted)
+                + "\n\nAdd them (parent before child) and re-run."
+            )
 
     added = add_missing_columns(target_engine, dry_run=args.dry_run)
     if added:

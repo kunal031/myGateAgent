@@ -14,8 +14,11 @@ from ..models.models import FeedCard, Subject, Topic
 from ..models.tags import ConceptTag, TagType
 from ..models.users import User
 from ..models.rotation import CardView
-from ..services.feed.progress import record_card_recalled, record_card_seen
+from ..services.feed.progress import (
+    mark_concept, record_card_recalled, record_card_seen, unmark_concept,
+)
 from ..services.feed.ranking import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, get_feed_page
+from ..services.activity import record as activity
 from ..services.feed.tagging import (
     card_metadata, related_cards, set_card_tags, slugify,
 )
@@ -90,6 +93,10 @@ def mark_seen(card_id: int, db: Session = Depends(get_db),
     view.seen_count = (view.seen_count or 0) + 1
     view.last_seen_at = datetime.utcnow()
     record_card_seen(db, card, user_id=user.id)
+    # The append-only event: card_views keeps only last_seen_at, so
+    # without this a day spent reading rather than answering is
+    # unrecoverable and the calendar shows it as empty.
+    activity.record_card_view(db, user_id=user.id, card=card)
     db.commit()
     return {"card_id": card_id, "seen_count": view.seen_count}
 
@@ -109,6 +116,7 @@ def mark_recalled(card_id: int, db: Session = Depends(get_db),
     # only just become true.
     db.flush()
     state = record_card_recalled(db, card, user_id=user.id)
+    activity.record_card_review(db, user_id=user.id, card=card, recalled=True)
     db.commit()
     return {
         "card_id": card_id,
@@ -481,4 +489,46 @@ def feed_progress(
             for k in (ConceptStatus.LEARNING, ConceptStatus.LEARNED,
                       ConceptStatus.REVISED, ConceptStatus.MASTERED)
         },
+    }
+
+
+class ConceptMark(BaseModel):
+    """Which way to move a concept. See services/feed/progress.mark_concept."""
+    action: str = Field(pattern="^(learn|revise|undo)$")
+
+
+@router.post("/concepts/{concept_id}/mark")
+def mark_concept_progress(concept_id: int, payload: ConceptMark,
+                          db: Session = Depends(get_db),
+                          user: User = Depends(current_user)):
+    """Mark a concept learned or revised directly.
+
+    The card-by-card path infers status from whether every card has been
+    recalled, which is right for reading but cannot express "I already
+    know this". This records the student's own judgement.
+    """
+    concept = db.query(Concept).filter(Concept.id == concept_id).first()
+    if concept is None:
+        raise HTTPException(404, "No such concept")
+
+    if payload.action == "undo":
+        state = unmark_concept(db, concept_id, user_id=user.id)
+    else:
+        state = mark_concept(db, concept_id, user_id=user.id,
+                             action=payload.action)
+
+    # Logged so the day report and calendar show it: a day spent marking
+    # concepts off is study, and would otherwise look empty.
+    activity.record_concept_progress(
+        db, user_id=user.id, concept=concept, status=state.status,
+    )
+    db.commit()
+
+    return {
+        "concept_id": concept_id,
+        "status": state.status,
+        "revision_count": state.revision_count or 0,
+        "last_revised_at": (
+            state.last_revised_at.isoformat() if state.last_revised_at else None
+        ),
     }

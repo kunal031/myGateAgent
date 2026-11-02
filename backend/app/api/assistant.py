@@ -1,18 +1,22 @@
 """Assistant endpoints: ask, continue a thread, explain a card."""
 
 import json
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..core.auth import current_user
+from ..core.background import dispatch, register
 from ..core.database import get_db
 from ..models.assistant import AssistantMessage, AssistantThread, Language
 from ..models.models import FeedCard, Subject
 from ..models.users import User
 from ..services.assistant import answer, parse_intent
 from ..services.assistant.intent import Intent
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/assistant", tags=["Assistant"])
 
@@ -98,26 +102,77 @@ def ask(payload: AskRequest, db: Session = Depends(get_db),
         subject = db.query(Subject).filter(Subject.slug == intent.subject_slug).first()
         subject_id = subject.id if subject else None
 
-    result = answer(db, query, language=language, subject_id=subject_id,
-                    card=card, history=history)
-
+    # A placeholder, so the conversation renders in order and the client
+    # has an id to poll. Written before generation starts rather than
+    # after, because on Lambda generation happens in another process.
     message = AssistantMessage(
-        thread_id=thread.id, role="assistant", content=result.text,
-        citations=json.dumps(result.citations),
+        thread_id=thread.id, role="assistant", content="",
+        citations="[]", status="pending",
     )
     db.add(message)
     db.commit()
     db.refresh(message)
 
+    dispatch(
+        "answer_question",
+        message_id=message.id, query=query, language=language,
+        subject_id=subject_id, card_id=card.id if card else None,
+    )
+
     return {
         "output": "chat",
         "thread_id": thread.id,
         "message_id": message.id,
-        "answer": result.text,
-        "citations": result.citations,
-        "source_type": result.source_type,
+        # No answer yet. The client polls the thread, which is what keeps
+        # a 60-second Gemini call from hitting API Gateway's 29s ceiling.
+        "status": "pending",
+        "answer": "",
+        "citations": [],
         "language": language,
     }
+
+
+@register("answer_question")
+def answer_question(db: Session, *, message_id: int, query: str,
+                    language: str, subject_id: int | None = None,
+                    card_id: int | None = None) -> None:
+    """Generate an answer and fill in its placeholder message.
+
+    Runs in the worker, which has fifteen minutes rather than the API's
+    twenty-nine seconds. Retrieval, grading and generation are unchanged;
+    only where they run has moved.
+    """
+    message = (
+        db.query(AssistantMessage)
+        .filter(AssistantMessage.id == message_id)
+        .first()
+    )
+    if message is None:
+        return
+
+    try:
+        card = (
+            db.query(FeedCard).filter(FeedCard.id == card_id).first()
+            if card_id else None
+        )
+        history = [
+            m for m in message.thread.messages
+            if m.id != message_id and m.status == "ready"
+        ]
+        result = answer(db, query, language=language, subject_id=subject_id,
+                        card=card, history=history)
+        message.content = result.text
+        message.citations = json.dumps(result.citations)
+        message.status = "ready"
+    except Exception as exc:
+        logger.exception("Answer generation failed for message %s", message_id)
+        # Recorded on the row rather than raised into nothing: the request
+        # that asked has long since returned, so this is the only place
+        # the student can be told.
+        message.status = "failed"
+        message.error = str(exc)[:500]
+    finally:
+        db.commit()
 
 
 @router.get("/threads")
@@ -165,10 +220,18 @@ def get_thread(thread_id: int, db: Session = Depends(get_db),
                 "role": m.role,
                 "content": m.content,
                 "citations": json.loads(m.citations) if m.citations else [],
+                # The client polls this thread while any message is
+                # pending; without the status it cannot tell a generating
+                # answer from an empty one.
+                "status": m.status or "ready",
+                "error": m.error or "",
                 "created_at": m.created_at.isoformat() if m.created_at else None,
             }
             for m in thread.messages
         ],
+        # Saves the client inspecting every message to decide whether to
+        # keep polling.
+        "pending": any(m.status == "pending" for m in thread.messages),
     }
 
 

@@ -21,7 +21,9 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..core.auth import admin_user, current_user
+from ..core.background import dispatch, register
 from ..core.database import get_db
+from ..core.uploads import discard_upload, fetch_upload, stage_upload
 from ..models.models import Question, Subject, Topic
 from ..models.papers import ImportStatus, PaperSource, QuestionPaper
 from ..models.users import User
@@ -169,29 +171,6 @@ def _fail(db: Session, paper: QuestionPaper, message: str) -> None:
     db.commit()
 
 
-def _run_in_background(fn, *args) -> None:
-    """Run `fn` on its own thread with its own database session.
-
-    A daemon thread rather than a task queue: this is a single-user study
-    app with no broker to run, and the work is already recoverable from the
-    paper row if the process dies mid-import.
-    """
-    import threading
-
-    from ..core.database import SessionLocal
-
-    def runner() -> None:
-        worker = SessionLocal()
-        try:
-            fn(worker, *args)
-        except Exception:
-            logger.exception("Background import failed")
-        finally:
-            worker.close()
-
-    threading.Thread(target=runner, daemon=True).start()
-
-
 def _note(db: Session, paper: QuestionPaper, note: str,
           *, done: int | None = None, total: int | None = None) -> None:
     """Record what the import is doing, for the client's progress display."""
@@ -201,6 +180,94 @@ def _note(db: Session, paper: QuestionPaper, note: str,
     if total is not None:
         paper.progress_total = total
     db.commit()
+
+
+@register("import_paper_url")
+def import_paper_url(db: Session, *, paper_id: int, url: str,
+                     use_page_title: bool = False) -> None:
+    """Fetch a page and parse it into questions.
+
+    Takes only JSON-serialisable arguments: on Lambda this runs in a
+    different process from the request that asked for it, so a closure
+    over the request body could not cross the boundary.
+    """
+    row = db.query(QuestionPaper).filter(QuestionPaper.id == paper_id).first()
+    if row is None:
+        return
+
+    _note(db, row, "Fetching the page")
+    try:
+        page = fetch_url(url)
+    except FetchError as exc:
+        _fail(db, row, str(exc))
+        return
+
+    if use_page_title and page.get("title"):
+        row.name = page["title"][:250]
+        db.commit()
+    _parse_in_background(db, paper_id, page["text"])
+
+
+@register("confirm_paper")
+def confirm_paper(db: Session, *, paper_id: int,
+                  generate_explanations: bool = False) -> None:
+    """Write the reviewed questions, optionally generating solutions first.
+
+    The longest of the three jobs: generating an explanation per question
+    is several Gemini calls, which is exactly the work that cannot run
+    inside a 29-second API request.
+    """
+    row = db.query(QuestionPaper).filter(QuestionPaper.id == paper_id).first()
+    if row is None:
+        return
+
+    questions = json.loads(row.preview_json or "[]")
+    if not questions:
+        _fail(db, row, "There is nothing left to import")
+        return
+
+    try:
+        if generate_explanations:
+            _explain_all(db, row, questions, subject_id=row.subject_id)
+        _note(db, row, "Saving questions")
+        provenance = row.origin_url or f"{row.file_name} (uploaded)"
+        store_questions(db, row, questions, provenance=provenance)
+        row.preview_json = ""
+        row.progress_note = ""
+        db.commit()
+    except Exception as exc:
+        logger.exception("Confirm failed for paper %s", paper_id)
+        _fail(db, row, f"Could not save those questions: {exc}")
+
+
+@register("import_paper_pdf")
+def import_paper_pdf(db: Session, *, paper_id: int, pdf_path: str) -> None:
+    """Extract text from a staged PDF and parse it into questions."""
+    from ..services.ingestion.extract import extract_pdf_pages
+
+    row = db.query(QuestionPaper).filter(QuestionPaper.id == paper_id).first()
+    if row is None:
+        return
+
+    _note(db, row, "Reading the PDF")
+    local = fetch_upload(pdf_path, paper_id)
+    try:
+        pages = extract_pdf_pages(local, f"paper-{paper_id}")
+        text = "\n\n".join(p["text"] for p in pages)
+    except Exception as exc:
+        logger.exception("PDF extraction failed for paper %s", paper_id)
+        _fail(db, row, f"Could not read that PDF: {exc}")
+        return
+    finally:
+        # Parsed once into rows; a question paper is not kept as corpus.
+        local.unlink(missing_ok=True)
+        discard_upload(pdf_path)
+
+    if len(text.strip()) < 200:
+        _fail(db, row, "That PDF has no readable text. It may be a scan.")
+        return
+
+    _parse_in_background(db, paper_id, text)
 
 
 def _parse_in_background(db: Session, paper_id: int, text: str) -> None:
@@ -283,25 +350,10 @@ def import_from_url(payload: UrlImportRequest, db: Session = Depends(get_db),
     paper = _begin(
         db, name=payload.name or payload.url, subject_slug=payload.subject_slug,
         topic_slug=payload.topic_slug, source_kind=PaperSource.URL,
-        origin_url=payload.url,
+        origin_url=payload.url, user_id=user.id,
     )
-    def work(worker: Session, paper_id: int) -> None:
-        row = worker.query(QuestionPaper).filter(
-            QuestionPaper.id == paper_id).first()
-        if row is None:
-            return
-        _note(worker, row, "Fetching the page")
-        try:
-            page = fetch_url(payload.url)
-        except FetchError as exc:
-            _fail(worker, row, str(exc))
-            return
-        if not payload.name and page.get("title"):
-            row.name = page["title"][:250]
-            worker.commit()
-        _parse_in_background(worker, paper_id, page["text"])
-
-    _run_in_background(work, paper.id)
+    dispatch("import_paper_url", paper_id=paper.id, url=payload.url,
+             use_page_title=not payload.name)
     return {"paper": _paper_dict(paper), "queued": True}
 
 
@@ -329,41 +381,16 @@ async def import_from_pdf(
     paper = _begin(
         db, name=name or file.filename, subject_slug=subject_slug,
         topic_slug=topic_slug, source_kind=PaperSource.PDF,
-        file_name=file.filename or "upload.pdf",
+        file_name=file.filename or "upload.pdf", user_id=user.id,
     )
 
-    def work(worker: Session, paper_id: int) -> None:
-        # Written to disk because the extractor works on a path, and
-        # deleted straight after: a question paper is parsed once into
-        # rows, not kept as corpus.
-        from ..services.ingestion.extract import extract_pdf_pages
-
-        row = worker.query(QuestionPaper).filter(
-            QuestionPaper.id == paper_id).first()
-        if row is None:
-            return
-
-        _note(worker, row, "Reading the PDF")
-        tmp = Path(tempfile.gettempdir()) / f"paper-{paper_id}.pdf"
-        try:
-            tmp.write_bytes(raw)
-            pages = extract_pdf_pages(tmp, f"paper-{paper_id}")
-            text = "\n\n".join(p["text"] for p in pages)
-        except Exception as exc:
-            logger.exception("PDF extraction failed for paper %s", paper_id)
-            _fail(worker, row, f"Could not read that PDF: {exc}")
-            return
-        finally:
-            tmp.unlink(missing_ok=True)
-
-        if len(text.strip()) < 200:
-            _fail(worker, row,
-                  "That PDF has no readable text. It may be a scan.")
-            return
-
-        _parse_in_background(worker, paper_id, text)
-
-    _run_in_background(work, paper.id)
+    # Staged where the worker can reach it. On Lambda the API and the
+    # worker are separate containers with separate /tmp, so the bytes
+    # cannot be handed over in the payload or left in local temp -- they
+    # go to the shared upload store, which is object storage when one is
+    # configured and a temp directory otherwise.
+    stored = stage_upload(paper.id, raw)
+    dispatch("import_paper_pdf", paper_id=paper.id, pdf_path=str(stored))
     return {"paper": _paper_dict(paper), "queued": True}
 
 
@@ -395,30 +422,19 @@ def confirm_import(
     paper.progress_note = (
         "Writing solutions" if payload.generate_explanations else "Saving"
     )
+    # Written back before dispatch, because the job re-reads from the row.
+    # A client that edited the questions during review sends them in the
+    # payload; without this the job would read the pre-edit preview and
+    # silently save the wrong ones.
+    paper.preview_json = json.dumps(questions)
     db.commit()
     db.refresh(paper)
 
-    def work(worker: Session, paper_id: int) -> None:
-        row = worker.query(QuestionPaper).filter(
-            QuestionPaper.id == paper_id).first()
-        if row is None:
-            return
-        try:
-            if payload.generate_explanations:
-                _explain_all(
-                    worker, row, questions, subject_id=row.subject_id,
-                )
-            _note(worker, row, "Saving questions")
-            provenance = row.origin_url or f"{row.file_name} (uploaded)"
-            store_questions(worker, row, questions, provenance=provenance)
-            row.preview_json = ""
-            row.progress_note = ""
-            worker.commit()
-        except Exception as exc:
-            logger.exception("Confirm failed for paper %s", paper_id)
-            _fail(worker, row, f"Could not save those questions: {exc}")
-
-    _run_in_background(work, paper.id)
+    # The questions are already persisted on the row, so the job re-reads
+    # them rather than carrying them across an invoke -- an async Lambda
+    # payload caps at 256 KB and a full paper exceeds that.
+    dispatch("confirm_paper", paper_id=paper.id,
+             generate_explanations=bool(payload.generate_explanations))
     return {"paper": _paper_dict(paper), "queued": True}
 
 

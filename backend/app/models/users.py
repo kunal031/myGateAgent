@@ -73,6 +73,13 @@ class User(Base):
     #: sign-in because Google's URLs expire.
     avatar_url = Column(String(512), nullable=True)
 
+    #: Optional, and deliberately not verified. It is shown on the profile
+    #: and used for nothing else -- no login, no recovery, no notification
+    #: -- so an unverified value cannot be leveraged to take an account
+    #: over. Verifying it would mean an SMS provider and a cost, which is
+    #: not worth it for a field that only labels the profile.
+    phone = Column(String(32), nullable=True)
+
     role = Column(String(20), default=UserRole.STUDENT, nullable=False, index=True)
 
     #: A disabled account keeps its data and stops being able to sign in,

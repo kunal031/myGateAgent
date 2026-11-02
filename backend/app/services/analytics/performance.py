@@ -15,9 +15,11 @@ import logging
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-from sqlalchemy import case, func
+from sqlalchemy import case, func, text
 from sqlalchemy.orm import Session
 
+from ...core.config import settings
+from ...models.activity import ActivityEvent, ActivityKind
 from ...models.concepts import Concept, ConceptProgress, ConceptStatus
 from ...models.exams import ExamItem, ExamSession
 from ...models.models import Attempt, MistakeRegistry, Question, Subject, Topic
@@ -26,7 +28,7 @@ from ...models.rotation import CardView
 logger = logging.getLogger(__name__)
 
 #: Below this an average is noise rather than a signal.
-MIN_ATTEMPTS_FOR_SIGNAL = 3
+MIN_ATTEMPTS_FOR_SIGNAL = 5
 
 #: A GATE 1-mark question is roughly 1.5 minutes, a 2-mark one roughly 3.
 #: Past these the question is costing more than it returns.
@@ -455,4 +457,222 @@ def exam_behaviour(db: Session, user_id: int) -> dict:
         ),
         "best_score": round(max((s.score or 0) for s in sessions), 2),
         "latest_score": round(sessions[-1].score or 0, 2),
+    }
+
+
+def coverage(db: Session, user_id: int) -> dict:
+    """How much of the syllabus has been touched at all.
+
+    The page led with accuracy, which for someone fourteen months out is
+    the wrong headline: 60% on 12 of 1,953 questions says almost nothing,
+    while "8 of 11 subjects untouched" says what to do tomorrow. Coverage
+    is the number that decides the result; accuracy only becomes
+    meaningful once there is enough of it to measure.
+
+    Three denominators, because they answer different questions: marks
+    are what the exam scores, questions are what practice consumes, and
+    concepts are what the feed teaches.
+    """
+    total_q = db.query(func.count(Question.id)).scalar() or 0
+    seen_q = (
+        db.query(func.count(func.distinct(Attempt.question_id)))
+        .filter(Attempt.user_id == user_id)
+        .scalar() or 0
+    )
+
+    total_c = db.query(func.count(Concept.id)).scalar() or 0
+    started_c = (
+        db.query(func.count(ConceptProgress.id))
+        .filter(ConceptProgress.user_id == user_id,
+                ConceptProgress.status != ConceptStatus.NOT_STARTED)
+        .scalar() or 0
+    )
+
+    total_marks = (
+        db.query(func.sum(Subject.weightage_marks)).scalar() or 0
+    )
+
+    # Each subject's marks scaled by how much of it has actually been
+    # attempted. Counting a subject as fully touched after one question
+    # read 56% covered when 0.9% of questions had been seen -- an
+    # overstatement, and on a page whose whole purpose is to stop
+    # overstating progress.
+    per_subject = db.execute(text("""
+        SELECT s.id, s.weightage_marks,
+               (SELECT count(*) FROM questions q WHERE q.subject_id = s.id),
+               (SELECT count(DISTINCT a.question_id)
+                  FROM attempts a
+                  JOIN questions q2 ON q2.id = a.question_id
+                 WHERE q2.subject_id = s.id AND a.user_id = :uid)
+        FROM subjects s
+    """), {"uid": user_id}).all()
+
+    touched_marks = sum(
+        float(weight or 0) * (seen / total)
+        for _sid, weight, total, seen in per_subject
+        if total
+    )
+
+    subjects_total = db.query(func.count(Subject.id)).scalar() or 0
+    subjects_touched = (
+        db.query(func.count(func.distinct(Question.subject_id)))
+        .join(Attempt, Attempt.question_id == Question.id)
+        .filter(Attempt.user_id == user_id)
+        .scalar() or 0
+    )
+
+    def pct(part: int | float, whole: int | float) -> float:
+        return round(part / whole * 100, 1) if whole else 0.0
+
+    return {
+        "questions_seen": int(seen_q),
+        "questions_total": int(total_q),
+        "questions_pct": pct(seen_q, total_q),
+        "concepts_started": int(started_c),
+        "concepts_total": int(total_c),
+        "concepts_pct": pct(started_c, total_c),
+        # Marks belonging to subjects with at least one attempt. A coarse
+        # measure -- one question does not cover a subject -- so it is
+        # labelled "touched", not "covered".
+        "marks_touched": round(float(touched_marks), 1),
+        "marks_total": round(float(total_marks), 1),
+        "marks_pct": pct(touched_marks, total_marks),
+        "subjects_touched": int(subjects_touched),
+        "subjects_total": int(subjects_total),
+    }
+
+
+def next_action(db: Session, user_id: int) -> dict | None:
+    """The one thing worth opening next, with the reason.
+
+    A page listing 282 concepts and 1,953 questions does not answer "what
+    now". This does, and deliberately returns one item rather than a
+    ranked list: a list of priorities is not a priority.
+
+    Untouched subjects come first and heaviest-first among them, because
+    with most of the syllabus unattempted the best move is almost never
+    to grind the one subject already started.
+    """
+    readiness = exam_readiness(db, user_id)
+    untested = [
+        s for s in readiness.get("untested_subjects", [])
+        if s.get("attempts", 0) == 0
+    ]
+    if untested:
+        top = max(untested, key=lambda s: s.get("weightage_marks", 0))
+        return {
+            "kind": "untested_subject",
+            "title": f"Start {top['subject_name']}",
+            "detail": (
+                f"{top['weightage_marks']:.0f} marks and nothing attempted "
+                "yet. An untested subject is a bigger gap than a weak one."
+            ),
+            "action": "Take a short quiz to get a baseline.",
+            "href": f"/quiz?subject={top['subject_slug']}",
+        }
+
+    weak = weak_topics(db, user_id, limit=1)
+    if weak:
+        top = weak[0]
+        return {
+            "kind": "weak_topic",
+            "title": f"Revise {top['topic_name']}",
+            "detail": (
+                f"{top['accuracy']}% across {top['attempts']} attempts in "
+                f"{top['subject_name']}, worth {top['marks_at_stake']} "
+                "recoverable marks."
+            ),
+            "action": "Open this topic in the feed.",
+            "href": f"/feed?subject={top['subject_slug']}",
+        }
+    return None
+
+
+#: Only count days with real study when measuring pace. Someone working
+#: 9-7 does not study daily, and dividing by calendar days would report
+#: a rate they never had and a deficit they cannot act on.
+PACE_WINDOW_DAYS = 28
+
+
+def pace_to_exam(db: Session, user_id: int) -> dict:
+    """Whether the current rate finishes the syllabus before the exam.
+
+    Everything else on the page is cumulative, which answers "how am I
+    doing" but never "am I ahead or behind". With a fixed date that is
+    the question that decides the outcome.
+
+    Measured on concepts rather than questions: the feed teaches
+    concepts, and finishing 282 of them is a closer proxy for covering
+    the syllabus than attempting 1,953 questions, many of which drill
+    the same idea.
+
+    Returns `on_track: None` when there is too little history to judge.
+    A projection from four days of data is a guess, and a confident wrong
+    one here would tell someone to relax or panic on no evidence.
+    """
+    from datetime import date as _date
+
+    try:
+        exam_day = _date.fromisoformat(settings.EXAM_DATE.strip())
+    except ValueError:
+        logger.warning("EXAM_DATE %r is not a date", settings.EXAM_DATE)
+        return {"configured": False}
+
+    today = datetime.utcnow().date()
+    days_left = (exam_day - today).days
+    weeks_left = max(days_left / 7, 0.1)
+
+    total_concepts = db.query(func.count(Concept.id)).scalar() or 0
+    done = (
+        db.query(func.count(ConceptProgress.id))
+        .filter(ConceptProgress.user_id == user_id,
+                ConceptProgress.status.in_((
+                    ConceptStatus.LEARNED, ConceptStatus.REVISED,
+                    ConceptStatus.MASTERED)))
+        .scalar() or 0
+    )
+    remaining = max(total_concepts - done, 0)
+
+    since = datetime.utcnow() - timedelta(days=PACE_WINDOW_DAYS)
+    recent = (
+        db.query(func.count(ActivityEvent.id))
+        .filter(ActivityEvent.user_id == user_id,
+                ActivityEvent.kind == ActivityKind.CONCEPT_PROGRESS,
+                ActivityEvent.created_at >= since)
+        .scalar() or 0
+    )
+    active_days = (
+        db.query(func.count(func.distinct(func.date(ActivityEvent.created_at))))
+        .filter(ActivityEvent.user_id == user_id,
+                ActivityEvent.created_at >= since)
+        .scalar() or 0
+    )
+
+    window_weeks = min(PACE_WINDOW_DAYS, max((today - since.date()).days, 1)) / 7
+    current_rate = round(recent / window_weeks, 1) if window_weeks else 0.0
+    needed_rate = round(remaining / weeks_left, 1)
+
+    # Four distinct study days is the floor for claiming a trend. Below
+    # it the rate is an artefact of which days happened to be sampled.
+    enough = active_days >= 4 and recent > 0
+    projected = int(current_rate * weeks_left) if enough else None
+
+    return {
+        "configured": True,
+        "exam_date": exam_day.isoformat(),
+        "days_left": days_left,
+        "weeks_left": round(weeks_left, 1),
+        "concepts_done": int(done),
+        "concepts_total": int(total_concepts),
+        "concepts_remaining": int(remaining),
+        "current_rate": current_rate,
+        "needed_rate": needed_rate,
+        "active_days": int(active_days),
+        # None rather than False when the evidence is thin: "behind" and
+        # "cannot tell yet" are different messages.
+        "on_track": (current_rate >= needed_rate) if enough else None,
+        "projected_by_exam": (
+            min(projected + int(done), total_concepts)
+            if projected is not None else None
+        ),
     }

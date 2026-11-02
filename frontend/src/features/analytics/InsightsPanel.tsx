@@ -12,7 +12,12 @@ const TONE: Record<string, { background: string; icon: typeof Info }> = {
 };
 
 /**
- * What to do differently, above the numbers that justify it.
+ * Observations drawn from attempt history, with a next step attached.
+ *
+ * Distinct from the concept rollup's "What to fix" tab, which filters
+ * concepts by their learned state. This reads behaviour -- pace,
+ * unanswered questions, topics losing marks -- so the two answer
+ * different questions and no longer share a name.
  *
  * Analytics that only describe are easy to read and ignore. Each entry
  * states a finding, the evidence behind it, and one next step -- and the
@@ -35,7 +40,7 @@ export default function InsightsPanel() {
     <section className="space-y-2">
       <h2 className="text-[11px] font-extrabold uppercase tracking-wider"
           style={{ color: "var(--ink-faint)" }}>
-        What to fix next
+        What your attempts show
       </h2>
 
       {insights.map((insight, i) => {

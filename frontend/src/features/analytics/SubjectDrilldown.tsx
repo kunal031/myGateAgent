@@ -1,0 +1,370 @@
+"use client";
+
+import React, { useCallback, useEffect, useState } from "react";
+import {
+  ChevronRight, CircleCheck, CircleDashed, CircleDot, Loader2,
+  RotateCcw, Sparkles, Wrench,
+} from "lucide-react";
+
+import {
+  BreakdownNode, ConceptView, fetchBreakdown, fetchBreakdownChildren,
+} from "@/lib/api";
+
+/**
+ * Subject -> Chapter -> Topic -> Concept, expanded one level at a time.
+ *
+ * One recursive component, because every level returns the same node
+ * shape. A node carries its own `level` and `id`, so expanding anything
+ * is the same call at any depth and adding a fifth level would need no
+ * new component, type or fetch.
+ *
+ * Children are fetched when a row is opened rather than up front: the
+ * whole tree is 11 subjects, 39 chapters, 57 topics and 282 concepts, and
+ * loading all of it to render eleven rows spends the request on data that
+ * will not be looked at. Each node caches its own children, so collapsing
+ * and reopening does not refetch -- a tree is explored by opening and
+ * closing, and refetching every toggle makes it feel broken.
+ */
+
+const VIEWS: { key: ConceptView; label: string; icon: typeof Wrench;
+               hint: string }[] = [
+  { key: "fix", label: "To fix", icon: Wrench,
+    hint: "Concepts untouched or still being learned" },
+  { key: "learned", label: "Learned", icon: Sparkles,
+    hint: "Concepts marked learned or better" },
+  { key: "revised", label: "Revised", icon: RotateCcw,
+    hint: "Concepts gone back over at least once" },
+];
+
+//: The table's column widths, declared once. The header and every row
+//: use this, so a column cannot drift out of alignment by one of them
+//: being edited and the other not.
+const GRID = "1fr 92px 64px 48px 16px 28px";
+
+const ACCURACY_GOOD = 75;
+const ACCURACY_FAIR = 50;
+
+const STATUS_ICON: Record<string, typeof CircleDot> = {
+  not_started: CircleDashed,
+  learning: CircleDot,
+  learned: CircleCheck,
+  revised: CircleCheck,
+  mastered: CircleCheck,
+};
+
+function accuracyColour(accuracy: number | null): string {
+  if (accuracy === null) return "var(--ink-faint)";
+  if (accuracy >= ACCURACY_GOOD) return "var(--ok, #10b981)";
+  if (accuracy >= ACCURACY_FAIR) return "var(--warn, #f59e0b)";
+  return "var(--bad, #f43f5e)";
+}
+
+/**
+ * The metrics every row shows.
+ *
+ * Coverage sits beside accuracy because either alone misleads: 100% of
+ * three questions is not mastery, and 20 attempts at 40% is not progress.
+ *
+ * The unit is labelled on every row -- "Q" for questions, "cards" for a
+ * concept -- because the concept level cannot count questions at all: no
+ * question carries a concept id. Without the label a topic reading 7/51
+ * sits directly above concepts reading 0/6 and looks like broken
+ * arithmetic, when the two are simply counting different things.
+ */
+function Metrics({ node }: { node: BreakdownNode }) {
+  const isConcept = node.level === "concept";
+  const done = isConcept ? node.cards_seen : node.covered;
+  const total = isConcept ? node.cards : node.available;
+
+  // A dash where accuracy is withheld, with the sample size in the
+  // tooltip: "0%" from three attempts reads as a verdict on a subject
+  // when it is the absence of evidence.
+  const tooFewTried = !isConcept && node.accuracy === null && node.attempted > 0;
+  const rightValue = isConcept
+    ? (node.coverage > 0 ? `${node.coverage}%` : "—")
+    : (node.accuracy === null
+        ? (tooFewTried ? `${node.attempted}·` : "—")
+        : `${node.accuracy}%`);
+
+  const rightColour = isConcept
+    ? (node.coverage >= 100 ? "var(--ok, #10b981)"
+      : node.coverage > 0 ? "var(--warn, #f59e0b)"
+      : "var(--ink-faint)")
+    : accuracyColour(node.accuracy);
+
+  const Icon = STATUS_ICON[node.status] ?? null;
+
+  // Every slot is always rendered, empty when it does not apply. A
+  // conditional column shifts every column to its left on the rows that
+  // lack it, so nothing lines up down the table -- which is what made
+  // concept rows look misaligned against the subjects above them.
+  return (
+    <>
+      {/* No unit glued to the number: "1/1200Q" read as a single value
+          with a stray letter. The column header carries the unit, and a
+          concept row says "cards" because its denominator is different
+          from every row above it. */}
+      <span className="hidden text-right font-mono text-[11px] tabular-nums sm:inline"
+            style={{ color: "var(--ink-faint)" }}
+            title={isConcept
+              ? `${done} of ${total} cards read`
+              : `${done} of ${total} questions seen`}>
+        <span style={{ color: done > 0 ? "var(--ink-soft)" : "inherit" }}>
+          {done}
+        </span>
+        <span style={{ opacity: 0.55 }}>{" / "}{total}</span>
+        {isConcept && <span style={{ opacity: 0.55 }}> cards</span>}
+        {node.repeats > 0 && (
+          <span title={`${node.repeats} repeat attempt(s)`}
+                style={{ opacity: 0.55 }}> +{node.repeats}</span>
+        )}
+      </span>
+
+      <div className="hidden h-1 self-center overflow-hidden rounded-full sm:block"
+           style={{ background: "var(--surface-sunk)" }}
+           title={`${node.coverage}% covered`}>
+        <div className="h-full" style={{
+          // A floor of 2% when anything at all has been covered: at 1%
+          // the bar renders as nothing, which reads as "untouched" when
+          // it is not.
+          width: node.coverage > 0
+            ? `${Math.max(2, Math.min(node.coverage, 100))}%`
+            : "0%",
+          background: "var(--ink-faint)",
+        }} />
+      </div>
+
+      <span className="text-right font-mono text-[11px] font-bold tabular-nums"
+            style={{ color: rightColour }}
+            title={tooFewTried
+              ? `Only ${node.attempted} attempt(s) -- too few to judge`
+              : undefined}>
+        {rightValue}
+      </span>
+
+      <span className="flex items-center justify-center">
+        {Icon && (
+          <Icon className="h-3.5 w-3.5"
+                style={{
+                  color: node.status === "not_started"
+                    ? "var(--ink-faint)" : "var(--ok, #10b981)",
+                }} />
+        )}
+      </span>
+
+      <span className="text-right font-mono text-[11px] font-bold tabular-nums"
+            style={{ color: (node.concepts_in_state ?? 0) > 0
+              ? "var(--ink-soft)" : "var(--ink-faint)" }}
+            title={isConcept ? undefined
+              : `${node.concepts_in_state ?? 0} concept(s) in this state`}>
+        {isConcept ? "" : node.concepts_in_state ?? 0}
+      </span>
+    </>
+  );
+}
+
+
+/** What the row says beside its name, which differs by level. */
+function metaFor(node: BreakdownNode): string | undefined {
+  if (node.level === "subject") return `~${node.weight}M`;
+  if (node.level === "concept") return node.weight ? `${node.weight}w` : undefined;
+  return node.children > 0
+    ? `${node.children} ${node.level === "chapter" ? "topics" : "concepts"}`
+    : undefined;
+}
+
+function Node({ node, depth, view }: {
+  node: BreakdownNode; depth: number; view: ConceptView;
+}) {
+  const [open, setOpen] = useState(false);
+  const [children, setChildren] = useState<BreakdownNode[] | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const expandable = node.expandable && node.id !== null;
+
+  const toggle = useCallback(() => {
+    if (!expandable) return;
+    setOpen((wasOpen) => {
+      if (!wasOpen && children === null && !loading) {
+        setLoading(true);
+        fetchBreakdownChildren(node.level, node.id as number, view)
+          .then(setChildren)
+          .catch(() => setChildren([]))
+          .finally(() => setLoading(false));
+      }
+      return !wasOpen;
+    });
+  }, [children, expandable, loading, node.id, node.level, view]);
+
+  const meta = metaFor(node);
+  const Tag = expandable ? "button" : "div";
+
+  return (
+    <>
+      <Tag
+        {...(expandable ? { type: "button" as const, onClick: toggle } : {})}
+        className={`grid w-full items-center gap-3 px-3 py-2 text-left hover:opacity-80 ${
+          depth === 0 && open ? "sticky top-0 z-10" : ""
+        }`}
+        style={{
+          gridTemplateColumns: GRID,
+          paddingLeft: `${12 + depth * 16}px`,
+          borderTop: "var(--line-width) solid var(--line)",
+          // Opaque while sticky, or the rows scrolling beneath show
+          // through a transparent header.
+          background: depth === 0
+            ? (open ? "var(--surface)" : "transparent")
+            : "var(--surface-sunk)",
+          boxShadow: depth === 0 && open ? "var(--shadow-sm)" : "none",
+        }}
+      >
+        {expandable ? (
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 transition-transform"
+                        style={{
+                          color: "var(--ink-faint)",
+                          transform: open ? "rotate(90deg)" : "none",
+                        }} />
+        ) : (
+          <span className="w-3.5 shrink-0" />
+        )}
+
+        <span className="min-w-0 flex-1 truncate text-[12px]"
+              style={{
+                color: expandable ? "var(--ink)" : "var(--ink-soft)",
+                fontWeight: depth === 0 ? 700 : 500,
+              }}>
+          {node.name}
+          {meta && (
+            <span className="ml-1.5 text-[10px] font-normal"
+                  style={{ color: "var(--ink-faint)" }}>
+              {meta}
+            </span>
+          )}
+        </span>
+
+        <Metrics node={node} />
+      </Tag>
+
+      {open && (loading ? (
+        <div className="flex justify-center py-3">
+          <Loader2 className="h-3.5 w-3.5 animate-spin"
+                   style={{ color: "var(--ink-faint)" }} />
+        </div>
+      ) : children && children.length === 0 ? (
+        <p className="py-2 text-[11px]"
+           style={{
+             paddingLeft: `${44 + depth * 16}px`,
+             color: "var(--ink-faint)",
+             borderTop: "var(--line-width) solid var(--line)",
+           }}>
+          Nothing recorded here yet.
+        </p>
+      ) : (
+        children?.map((child) => (
+          <Node key={`${child.level}-${child.id}`} node={child}
+                depth={depth + 1} view={view} />
+        ))
+      ))}
+    </>
+  );
+}
+
+export default function SubjectDrilldown() {
+  const [subjects, setSubjects] = useState<BreakdownNode[] | null>(null);
+  const [error, setError] = useState("");
+  const [view, setView] = useState<ConceptView>("fix");
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchBreakdown(view)
+      .then((rows) => !cancelled && setSubjects(rows))
+      .catch((err) => !cancelled
+        && setError(err instanceof Error ? err.message : "Could not load"));
+    return () => { cancelled = true; };
+  }, [view]);
+
+  const total = subjects?.reduce(
+    (sum, s) => sum + (s.concepts_in_state ?? 0), 0,
+  ) ?? 0;
+
+  return (
+    <section className="overflow-hidden rounded-[var(--radius-lg)]"
+             style={{
+               background: "var(--surface)",
+               border: "var(--line-width) solid var(--line)",
+             }}>
+      <header className="space-y-2 px-3 py-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="mr-auto text-[13px] font-bold"
+              style={{ color: "var(--ink)" }}>
+            Subject breakdown
+          </h3>
+
+          {/* The concept state used to be a second table listing the
+              same eleven subjects. It is a filter on this one now: the
+              rightmost column counts concepts in the chosen state, and
+              every other column is unaffected by it. */}
+          <div className="flex gap-1 rounded-[var(--radius-pill)] p-0.5"
+               style={{ background: "var(--surface-sunk)",
+                        border: "var(--line-width) solid var(--line)" }}>
+            {VIEWS.map(({ key, label, icon: Icon, hint }) => (
+              <button
+                key={key} type="button" title={hint}
+                onClick={() => setView(key)}
+                className="flex items-center gap-1 rounded-[var(--radius-pill)] px-2.5 py-1 text-[11px] font-bold"
+                style={view === key
+                  ? { background: "var(--accent)", color: "var(--ink)" }
+                  : { background: "transparent", color: "var(--ink-faint)" }}
+              >
+                <Icon className="h-3 w-3" />
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <p className="text-[10px]" style={{ color: "var(--ink-faint)" }}>
+          {total} concept{total === 1 ? "" : "s"}{" "}
+          {VIEWS.find((v) => v.key === view)?.label.toLowerCase()} across the
+          syllabus
+        </p>
+      </header>
+
+      {/* Column labels, aligned to the same fixed widths the rows use, so
+          each number says what it is instead of relying on the reader to
+          infer it from its position. */}
+      <div className="hidden items-center gap-3 px-3 pb-1.5 text-[9px] font-extrabold uppercase tracking-wider sm:grid"
+           style={{ gridTemplateColumns: GRID, color: "var(--ink-faint)" }}>
+        <span>Subject</span>
+        <span className="text-right" title="Distinct questions attempted">
+          Questions
+        </span>
+        <span className="text-center">Covered</span>
+        <span className="text-right">Accuracy</span>
+        <span />
+        <span className="text-right"
+              title="Concepts in the selected state">
+          {VIEWS.find((v) => v.key === view)?.label}
+        </span>
+      </div>
+
+      {error && (
+        <p className="px-3 py-3 text-[12px]" style={{ color: "var(--ink-faint)" }}>
+          {error}
+        </p>
+      )}
+
+      {!subjects && !error && (
+        <div className="flex justify-center py-6">
+          <Loader2 className="h-4 w-4 animate-spin"
+                   style={{ color: "var(--ink-faint)" }} />
+        </div>
+      )}
+
+      {subjects?.map((subject) => (
+        <Node key={`subject-${subject.id}`} node={subject} depth={0}
+              view={view} />
+      ))}
+    </section>
+  );
+}

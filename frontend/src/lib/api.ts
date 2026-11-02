@@ -62,6 +62,9 @@ export interface QuizQuestion {
   id: number;
   subject_name: string;
   subject_slug: string;
+  /** Shown so a practice question states its full place in the syllabus:
+   *  subject -> chapter -> topic. */
+  chapter_name?: string | null;
   topic_name: string;
   topic_slug: string;
   question_type: "MCQ" | "MSQ" | "NAT";
@@ -72,6 +75,10 @@ export interface QuizQuestion {
   difficulty: string;
   source: string;
   is_pyq: boolean;
+  exam_year?: number | null;
+  /** Which sitting of that year, e.g. "Set 1". Null when the paper did
+   *  not record one, which is most of them. */
+  exam_set?: string | null;
 }
 
 export interface SubmitPayload {
@@ -214,8 +221,13 @@ export interface AssistantChatResult {
   message_id: number;
   answer: string;
   citations: string[];
-  source_type: string;
+  source_type?: string;
   language: AssistantLanguage;
+  /** "pending" until the worker has generated the answer. The API
+   *  returns immediately because a grounded answer takes far longer than
+   *  API Gateway's 29-second ceiling allows. */
+  status?: "pending" | "ready" | "failed";
+  error?: string;
 }
 
 export type AssistantResult = AssistantFeedResult | AssistantChatResult;
@@ -240,12 +252,71 @@ export interface AssistantMessage {
   role: "user" | "assistant";
   content: string;
   citations: string[];
+  status?: "pending" | "ready" | "failed";
+  error?: string;
   created_at: string | null;
+}
+
+/**
+ * Ask, then wait for the worker to finish.
+ *
+ * The endpoint returns a placeholder immediately, so every caller would
+ * otherwise have to write the same polling loop -- and one that forgot
+ * would silently render an empty answer.
+ *
+ * `onPending` fires once as soon as the placeholder exists, which is what
+ * lets the UI show the question and a thinking state rather than freezing
+ * until the answer lands.
+ */
+export async function askAndWait(
+  body: Parameters<typeof askAssistant>[0],
+  opts: {
+    onPending?: (r: AssistantChatResult) => void;
+    signal?: AbortSignal;
+    /** Generation has been measured at over five minutes when the Gemini
+     *  key is rate limited, so this is generous by design. */
+    timeoutMs?: number;
+  } = {},
+): Promise<AssistantChatResult> {
+  const first = await askAssistant(body);
+  if (first.output !== "chat") {
+    throw new Error("That question was answered with feed filters");
+  }
+  if (first.status !== "pending") return first;
+
+  opts.onPending?.(first);
+
+  const deadline = Date.now() + (opts.timeoutMs ?? 10 * 60 * 1000);
+  // Backs off from half a second to five: a short answer lands almost at
+  // once, and a slow one should not be polled 1,200 times.
+  let waitMs = 500;
+
+  while (Date.now() < deadline) {
+    if (opts.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    await new Promise((r) => setTimeout(r, waitMs));
+    waitMs = Math.min(waitMs * 1.5, 5000);
+
+    const thread = await fetchThread(first.thread_id);
+    const message = thread.messages.find((m) => m.id === first.message_id);
+    if (!message || message.status === "pending") continue;
+
+    if (message.status === "failed") {
+      throw new Error(message.error || "The assistant could not answer that");
+    }
+    return {
+      ...first,
+      status: "ready",
+      answer: message.content,
+      citations: message.citations ?? [],
+    };
+  }
+
+  throw new Error("The assistant is taking longer than expected");
 }
 
 export async function fetchThread(
   threadId: number,
-): Promise<{ id: number; title: string; messages: AssistantMessage[] }> {
+): Promise<{ id: number; title: string; messages: AssistantMessage[]; pending?: boolean }> {
   const res = await fetch(`${API_BASE}/api/assistant/threads/${threadId}`);
   if (!res.ok) throw new Error("Could not load that conversation");
   return res.json();
@@ -289,18 +360,15 @@ export async function fetchStats(): Promise<StatsSummary> {
 export async function chatWithAgent(query: string, subjectSlug?: string): Promise<AgentChatResponse> {
   // /api/agent/chat was never built; the assistant lives at /api/assistant/ask.
   // Its reply is reshaped here so callers of this function stay unchanged.
-  const res = await fetch(`${API_BASE}/api/assistant/ask`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, subject_slug: subjectSlug }),
-  });
-  if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(
-      `Assistant request failed (${res.status})${detail ? `: ${detail.slice(0, 200)}` : ""}`,
-    );
-  }
-  const data = await res.json();
+  //
+  // Through askAndWait because this caller renders the answer directly:
+  // the endpoint returns a placeholder, so reading data.answer from the
+  // first response would render an empty reply.
+  // subjectSlug is accepted for call-site compatibility and not sent:
+  // AskRequest has no such field, so the server has always ignored it.
+  // The subject is inferred from the question by intent parsing instead.
+  void subjectSlug;
+  const data = await askAndWait({ query });
   return {
     reply: data.answer ?? "",
     source: data.source_type ?? "knowledge_base",
@@ -596,5 +664,250 @@ export async function fetchInsights(): Promise<Insight[]> {
 export async function fetchDeepAnalytics(): Promise<DeepAnalytics> {
   const res = await fetch(`${API_BASE}/api/stats/deep`);
   if (!res.ok) throw new Error("Could not load analytics");
+  return res.json();
+}
+
+// ------------------------------------------------------------- profile
+
+export interface ProfileInfo {
+  id: number;
+  email: string;
+  display_name: string;
+  phone: string;
+  role: "student" | "admin";
+  avatar_url: string | null;
+  has_password: boolean;
+  google_linked: boolean;
+  created_at: string | null;
+  last_login_at: string | null;
+}
+
+export interface ProfileStats {
+  questions: {
+    attempted: number; distinct: number; correct: number; wrong: number;
+    accuracy: number | null; marks_earned: number; minutes_spent: number;
+    by_type: { question_type: string; attempts: number; correct: number;
+               accuracy: number | null }[];
+  };
+  concepts: { learned: number; learning: number; mastered: number; touched: number };
+  cards: { seen: number; views: number; mastered: number };
+  tests: { kind: string; submitted: number; total_score: number;
+           best_score: number; avg_accuracy: number }[];
+  open_mistakes: number;
+  active_days: number;
+}
+
+export async function fetchProfile(): Promise<ProfileInfo> {
+  const res = await fetch(`${API_BASE}/api/profile/me`);
+  if (!res.ok) throw new Error("Could not load your profile");
+  return res.json();
+}
+
+export async function fetchProfileStats(): Promise<ProfileStats> {
+  const res = await fetch(`${API_BASE}/api/profile/me/stats`);
+  if (!res.ok) throw new Error("Could not load your stats");
+  return res.json();
+}
+
+export async function updateProfile(
+  patch: { display_name?: string; phone?: string },
+): Promise<ProfileInfo> {
+  const res = await fetch(`${API_BASE}/api/profile/me`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error("Could not save your profile");
+  return res.json();
+}
+
+/** Returns fresh tokens: changing the password invalidates the old ones,
+ *  so the caller must store these or the user is signed out by the very
+ *  act of changing it. */
+export async function changePassword(
+  current_password: string, new_password: string,
+): Promise<{ access_token: string; refresh_token: string }> {
+  const res = await fetch(`${API_BASE}/api/profile/me/password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ current_password, new_password }),
+  });
+  if (!res.ok) {
+    // The server's message distinguishes a wrong current password from a
+    // reused one, and both are worth showing verbatim.
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.detail ?? "Could not change your password");
+  }
+  return res.json();
+}
+
+// ------------------------------------------------- hierarchy drill-down
+
+/**
+ * One node of the Subject -> Chapter -> Topic -> Concept tree.
+ *
+ * Every level returns exactly this shape, so the client needs one type,
+ * one fetch and one renderer rather than four of each. Fields that do
+ * not apply to a level are zero rather than absent -- a missing key and
+ * a zero look identical in JavaScript right until one of them throws.
+ */
+export interface BreakdownNode {
+  level: "subject" | "chapter" | "topic" | "concept";
+  /** Null only for the "Unassigned" chapter, which is a placeholder. */
+  id: number | null;
+  name: string;
+  slug: string;
+  sequence: number;
+  /** Whether asking for this node's children is meaningful. */
+  expandable: boolean;
+  /** How many children, so a row can say what opening it will show. */
+  children: number;
+
+  attempted: number;
+  correct: number;
+  accuracy: number | null;
+  available: number;
+  /** Distinct questions seen; differs from `attempted` on any retry. */
+  covered: number;
+  repeats: number;
+  unattempted: number;
+
+  cards: number;
+  cards_seen: number;
+  cards_mastered: number;
+
+  /** Percent touched: questions at the top three levels, cards at the
+   *  concept level, since no question carries a concept id. */
+  coverage: number;
+  weight: number;
+  status: string;
+  /** Concepts under this node in the selected state (fix/learned/revised).
+   *  Carried on the same row so one table answers both "how am I doing"
+   *  and "what is left", instead of two tables listing the same
+   *  subjects. */
+  concepts_in_state?: number;
+}
+
+export type ConceptView = "fix" | "learned" | "revised";
+
+export async function fetchBreakdown(
+  view: ConceptView = "fix",
+): Promise<BreakdownNode[]> {
+  const res = await fetch(`${API_BASE}/api/stats/breakdown?view=${view}`);
+  if (!res.ok) throw new Error("Could not load the subject breakdown");
+  return res.json();
+}
+
+/** The children of any node. Takes the level and id straight off the node
+ *  being expanded, so the call is the same at every depth. */
+export async function fetchBreakdownChildren(
+  level: string, id: number, view: ConceptView = "fix",
+): Promise<BreakdownNode[]> {
+  const res = await fetch(
+    `${API_BASE}/api/stats/breakdown/${level}/${id}?view=${view}`,
+  );
+  if (!res.ok) throw new Error("Could not load that level");
+  return res.json();
+}
+
+/** Mark a concept learned or revised directly, on the student's own
+ *  judgement, rather than inferring it from card-by-card recall. */
+export async function markConcept(
+  conceptId: number, action: "learn" | "revise" | "undo",
+): Promise<{ concept_id: number; status: string; revision_count: number }> {
+  const res = await fetch(`${API_BASE}/api/feed/concepts/${conceptId}/mark`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action }),
+  });
+  if (!res.ok) throw new Error("Could not update that concept");
+  return res.json();
+}
+
+/** Concepts in one state, grouped subject -> chapter -> topic. */
+export interface ConceptRollup {
+  view: string;
+  total: number;
+  subjects: RollupNode[];
+}
+
+export interface RollupNode {
+  level: "subject" | "chapter" | "topic" | "concept";
+  id: number | null;
+  name: string;
+  count?: number;
+  weight?: number;
+  status?: string;
+  revisions?: number;
+  last_revised_at?: string | null;
+  children?: RollupNode[];
+  concepts?: RollupNode[];
+}
+
+export async function fetchConceptRollup(
+  view: "fix" | "learned" | "revised",
+): Promise<ConceptRollup> {
+  const res = await fetch(`${API_BASE}/api/stats/concepts/${view}`);
+  if (!res.ok) throw new Error("Could not load that view");
+  return res.json();
+}
+
+/** Write a solution for a question that has none.
+ *
+ *  Routed server-side to the fallback provider rather than Gemini: the
+ *  free Gemini key is the one the feed and assistant depend on, and
+ *  spending it on a mid-practice request would starve those.
+ */
+export async function generateSolution(
+  questionId: number,
+): Promise<{ explanation: string; solution_source: string; generated: boolean }> {
+  const res = await fetch(
+    `${API_BASE}/api/quiz/${questionId}/solution/generate`,
+    { method: "POST" },
+  );
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.detail ?? "Could not generate a solution");
+  }
+  return res.json();
+}
+
+// --------------------------------------------------------- coverage
+
+export interface CoverageSummary {
+  coverage: {
+    questions_seen: number; questions_total: number; questions_pct: number;
+    concepts_started: number; concepts_total: number; concepts_pct: number;
+    marks_touched: number; marks_total: number; marks_pct: number;
+    subjects_touched: number; subjects_total: number;
+  };
+  next_action: {
+    kind: string; title: string; detail: string; action: string; href: string;
+  } | null;
+  readiness: {
+    projected_marks: number; assessed_weight: number;
+    unassessed_weight: number; confidence: string;
+  };
+  pace: {
+    configured: boolean;
+    exam_date?: string;
+    days_left?: number;
+    weeks_left?: number;
+    concepts_done?: number;
+    concepts_total?: number;
+    concepts_remaining?: number;
+    current_rate?: number;
+    needed_rate?: number;
+    active_days?: number;
+    /** null when there is too little history to judge -- "behind" and
+     *  "cannot tell yet" are different messages. */
+    on_track?: boolean | null;
+    projected_by_exam?: number | null;
+  };
+}
+
+export async function fetchCoverage(): Promise<CoverageSummary> {
+  const res = await fetch(`${API_BASE}/api/stats/coverage`);
+  if (!res.ok) throw new Error("Could not load coverage");
   return res.json();
 }

@@ -17,11 +17,11 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { name: "Feed", href: "/feed", icon: Flame, tag: "Recall", primary: true },
-  { name: "Quiz", href: "/quiz", icon: HelpCircle, tag: "Drill", primary: true },
+  { name: "Feed", href: "/feed", icon: Flame, tag: "Learn", primary: true },
+  { name: "Quiz", href: "/quiz", icon: HelpCircle, tag: "Practice", primary: true },
   { name: "Test", href: "/test", icon: Timer, tag: "Mock", primary: true },
   { name: "Analytics", href: "/analytics", icon: BarChart3, tag: "Stats", primary: true },
-  { name: "Agent", href: "/agent", icon: Bot, tag: "RAG", primary: false },
+  { name: "Agent", href: "/agent", icon: Bot, tag: "Ask", primary: false },
 ];
 
 export const isActivePath = (pathname: string, href: string): boolean =>

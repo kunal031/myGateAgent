@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Keeps the Aiven database from being powered off for inactivity.
+
+  Install:
+    cp deploy/com.gatemaster.keepawake.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.gatemaster.keepawake.plist
+
+  Remove:
+    launchctl unload ~/Library/LaunchAgents/com.gatemaster.keepawake.plist
+    rm ~/Library/LaunchAgents/com.gatemaster.keepawake.plist
+
+  Check it is running:
+    launchctl list | grep gatemaster
+    tail -f /tmp/gatemaster-keepawake.log
+
+  One-shot pings rather than a long-lived --watch process: launchd owns the
+  schedule, so the job survives a reboot and cannot be left wedged by a
+  hung connection. RunAtLoad fires one immediately so a mistake in the
+  path shows up at install time rather than half an hour later.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.gatemaster.keepawake</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/kunal/Desktop/Projects/GateMaster/backend/venv/bin/python</string>
+        <string>-m</string>
+        <string>app.cli.keep_awake</string>
+        <string>--target</string>
+        <string>aiven</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/kunal/Desktop/Projects/GateMaster/backend</string>
+
+    <!-- Every 30 minutes. Well inside any plausible idle threshold, and
+         cheap: one SELECT 1 touching no table. -->
+    <key>StartInterval</key>
+    <integer>1800</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/gatemaster-keepawake.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/gatemaster-keepawake.log</string>
+</dict>
+</plist>
