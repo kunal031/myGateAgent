@@ -47,6 +47,12 @@ python-docx==1.2.0              # .docx
 python-pptx==1.0.2              # .pptx
 Pillow==12.1.0                  # image handling for vision transcription
 
+# ---- Cache ----
+# Derived values only (syllabus, analytics, feed pages). The app runs
+# without it: every cache failure is treated as a miss, so an outage
+# costs latency rather than availability.
+redis==6.4.0
+
 # ---- Utilities ----
 python-dotenv==1.2.4
 gdown==6.4.1                    # Google Drive note downloads

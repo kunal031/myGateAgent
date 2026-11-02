@@ -49,6 +49,31 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
     ]
 
+    # ---- Cache ----
+    #: Redis, used only for derived values that Postgres can recompute.
+    #: Empty disables caching entirely and the app behaves exactly as it
+    #: did before -- which is also what happens when Redis is configured
+    #: but unreachable, so an outage costs latency and not availability.
+    #: docker-compose sets this; locally it is usually left empty.
+    REDIS_URL: str = ""
+
+    #: How stale each kind of value may be, in seconds.
+    #:
+    #: The syllabus is effectively static -- it changes when a topic is
+    #: added by hand, which the write path invalidates anyway -- so it
+    #: gets a long one.
+    CACHE_TTL_SYLLABUS: int = 3600
+    #: Analytics are read far more often than the attempts behind them
+    #: change, and a minute-old accuracy figure is indistinguishable from
+    #: a current one to a reader. Recording an attempt invalidates them
+    #: regardless, so this is only the ceiling on how long a stale value
+    #: can survive if an invalidation is ever missed.
+    CACHE_TTL_STATS: int = 300
+    #: The feed reorders as cards are seen, so it is held briefly: long
+    #: enough to absorb a reload or a second tab, short enough that the
+    #: order still responds to what the student just did.
+    CACHE_TTL_FEED: int = 60
+
     # ---- Auth ----
     #: Signs every token. Empty means the app refuses to start, rather
     #: than falling back to a default that would let anyone forge a token
