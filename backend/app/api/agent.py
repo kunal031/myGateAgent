@@ -10,9 +10,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..core.auth import admin_user
+from ..core.auth import admin_user, current_user
 from ..core.database import get_db
 from ..models.sources import Source, SourceChunk
+from ..models.users import User
 from ..services import retrieval
 
 router = APIRouter(prefix="/api/agent", tags=["Agent & Retrieval"])
@@ -41,7 +42,8 @@ class SearchResponse(BaseModel):
 
 
 @router.post("/search", response_model=SearchResponse)
-def search_sources(payload: SearchRequest, db: Session = Depends(get_db)):
+def search_sources(payload: SearchRequest, db: Session = Depends(get_db),
+                   _user: User = Depends(current_user)):
     """Hybrid keyword + semantic search over the indexed corpus.
 
     Every excerpt carries its citation, so anything built from this result
@@ -77,7 +79,8 @@ def search_sources(payload: SearchRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/index/status")
-def index_status(db: Session = Depends(get_db)):
+def index_status(db: Session = Depends(get_db),
+                 _user: User = Depends(current_user)):
     """Indexing progress, so a partial ingest is visible rather than silent."""
     stats = retrieval.index_stats(db)
     stats["sources"] = db.query(Source).count()
@@ -100,7 +103,8 @@ batch_limit: int = Query(default=200, le=2000),
 
 
 @router.get("/sources")
-def list_sources(db: Session = Depends(get_db)):
+def list_sources(db: Session = Depends(get_db),
+                 _user: User = Depends(current_user)):
     """Every ingested file with its extraction and indexing progress."""
     sources = db.query(Source).order_by(Source.kind, Source.file_name).all()
     return [

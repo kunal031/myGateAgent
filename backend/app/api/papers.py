@@ -324,6 +324,7 @@ def list_papers(
     subject_slug: str | None = None,
     topic_slug: str | None = None,
     db: Session = Depends(get_db),
+    _user: User = Depends(current_user),
 ):
     """Papers, newest first, for the quiz page's paper picker."""
     query = db.query(QuestionPaper)
@@ -439,7 +440,8 @@ def confirm_import(
 
 
 @router.get("/{paper_id}/status")
-def paper_status(paper_id: int, db: Session = Depends(get_db)):
+def paper_status(paper_id: int, db: Session = Depends(get_db),
+                 _admin: User = Depends(admin_user)):
     """Just the progress fields, for polling while an import runs.
 
     Separate from GET /{id}, which returns every question: polling that once
@@ -462,7 +464,8 @@ def paper_status(paper_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{paper_id}/preview")
-def paper_preview(paper_id: int, db: Session = Depends(get_db)):
+def paper_preview(paper_id: int, db: Session = Depends(get_db),
+                  _admin: User = Depends(admin_user)):
     """The parsed questions awaiting review.
 
     Held on the paper rather than in the response to the import call, so
@@ -478,7 +481,8 @@ def paper_preview(paper_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{paper_id}")
-def get_paper(paper_id: int, db: Session = Depends(get_db)):
+def get_paper(paper_id: int, db: Session = Depends(get_db),
+              _admin: User = Depends(admin_user)):
     """A paper and the questions it created."""
     # Not scoped by user_id, deliberately: these routes are admin-only,
     # and an admin reviewing an import needs to see every paper.
