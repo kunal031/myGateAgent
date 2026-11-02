@@ -56,3 +56,7 @@ backend/data/backups/
 
 # ---- Stray session file ----
 :memory:.ses
+
+# SAM build output: hundreds of MB of vendored wheels, rebuilt by
+# `sam build`.
+.aws-sam/

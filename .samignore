@@ -1,0 +1,53 @@
+# What sam build must NOT copy into a Lambda package.
+#
+# CodeUri points at backend/, so without this SAM copies everything
+# under it. backend/data/ alone is 3.1 GB of corpus, OCR cache, vectors
+# and logs, which made every function's artifact 3.2 GB against Lambda's
+# 250 MB unzipped limit. backend/.dockerignore already lists these for
+# the container build; SAM does not read that file, hence this one.
+#
+# The dependencies themselves are only ~110 MB, which fits.
+
+# The corpus and everything derived from it. Reproducible, and at
+# runtime the data lives in Postgres and S3, not beside the code.
+backend/data/
+backend/books/
+books/
+
+# The stale local SQLite file. 9 MB, and Lambda connects to Neon.
+backend/gatemaster.db
+backend/*.db
+*.db
+
+# Local environments and caches.
+backend/venv/
+backend/.venv/
+**/__pycache__/
+**/*.pyc
+backend/.pytest_cache/
+
+# Secrets never belong in a deployment artifact. Lambda reads
+# configuration from environment variables set by the template.
+backend/.env
+backend/.env.*
+.env
+.env.*
+
+# Tests and dev-only manifests: nothing in the running function imports
+# them.
+backend/tests/
+backend/pytest.ini
+backend/requirements-dev.txt
+
+# Logs.
+**/*.log
+
+# The frontend is deployed separately.
+frontend/
+node_modules/
+.next/
+
+# Build output and VCS.
+.aws-sam/
+.git/
+docs/
