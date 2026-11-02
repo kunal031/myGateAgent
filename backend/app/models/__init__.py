@@ -12,11 +12,11 @@ from . import chapters  # noqa: F401  (Topic.chapter resolves against this)
 from . import oauth  # noqa: F401  (pending sign-ins, shared across instances)
 from . import models  # noqa: F401  (base tables first)
 from . import (  # noqa: F401
-    assistant, concepts, exams, papers, rotation, sources, syllabus, tags,
-    users,
+    assistant, concepts, exams, papers, rotation, sessions, sources,
+    syllabus, tags, users,
 )
 
 __all__ = [
     "models", "activity", "chapters", "oauth", "concepts", "exams", "sources", "syllabus",
-    "assistant", "rotation", "tags", "papers", "users",
+    "assistant", "rotation", "sessions", "tags", "papers", "users",
 ]
