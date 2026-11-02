@@ -62,6 +62,60 @@ Parameters:
     NoEcho: true
     Default: ""
 
+  # ---- Free-tier guardrails ----
+
+  MonthlyRequestBudget:
+    Type: Number
+    Default: 700000
+    MinValue: 10000
+    MaxValue: 1000000
+    Description: >
+      Requests per month this stack is allowed to serve. Deliberately
+      below the free tier's 1,000,000, because requests are not the limit
+      that binds first.
+
+      The free tier is 1M requests AND 400,000 GB-seconds. At 1024 MB a
+      cold start measured at ~0.9s costs 0.9 GB-s, so a flood of cold
+      starts exhausts the GB-second half at roughly 490,000 requests --
+      less than half the request allowance. 700,000 leaves headroom under
+      both at 512 MB.
+
+  SustainedRateLimit:
+    Type: Number
+    Default: 20
+    Description: >
+      Steady-state requests/second at the gateway. 20 rps is 51.8M
+      requests a month if sustained, so this is not the monthly control
+      -- it is what stops a burst arriving faster than the alarms can
+      react. One studying human peaks near 2 rps.
+
+  BurstRateLimit:
+    Type: Number
+    Default: 40
+    Description: >
+      Token-bucket depth. Must absorb a page load that fans out to
+      several calls at once -- the analytics page issues four -- without
+      admitting a flood.
+
+  ApiReservedConcurrency:
+    Type: Number
+    Default: 10
+    Description: >
+      The actual ceiling, and the only one of these that is a hard limit.
+      Gateway throttling is best-effort by AWS's own documentation;
+      reserved concurrency is enforced by Lambda. 10 concurrent
+      executions at ~60ms each is about 166 rps of real capacity, well
+      above one user's need, and it caps how fast GB-seconds can possibly
+      be spent no matter what the gateway admits.
+
+  AlertEmail:
+    Type: String
+    Default: ""
+    Description: >
+      Where budget and usage alarms go. Empty disables the alarms, which
+      is the wrong choice: cost data lags 8-24 hours, so an alarm is the
+      only thing that tells you an attack happened at all.
+
   FrontendOrigin:
     Type: String
     Default: http://localhost:3000
@@ -69,6 +123,10 @@ Parameters:
 
 Conditions:
   HasGoogle: !Not [!Equals [!Ref GoogleClientId, ""]]
+  # Alarms and the budget need somewhere to send to. Without an address
+  # they are created but silent, which is worse than not created: it
+  # looks like monitoring exists.
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, ""]]
 
 Globals:
   Function:
@@ -101,6 +159,25 @@ Resources:
     Type: AWS::Serverless::HttpApi
     Properties:
       StageName: !Ref Stage
+      # First layer. Applies to every route on the stage, so a new route
+      # is throttled the moment it exists rather than when someone
+      # remembers to add it.
+      #
+      # AWS calls these "best-effort ... targets rather than guaranteed
+      # request ceilings", which is why this is not the only layer --
+      # ApiReservedConcurrency below is the enforced one.
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: !Ref BurstRateLimit
+        ThrottlingRateLimit: !Ref SustainedRateLimit
+      # Access logs are what turn "the bill went up" into "these IPs did
+      # it". Without them an attack leaves no evidence at all.
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiAccessLogs.Arn
+        Format: >
+          {"t":"$context.requestTime","ip":"$context.identity.sourceIp",
+          "m":"$context.httpMethod","p":"$context.path",
+          "s":"$context.status","err":"$context.error.message",
+          "lat":"$context.responseLatency","len":"$context.responseLength"}
       CorsConfiguration:
         AllowOrigins: [!Ref FrontendOrigin]
         AllowHeaders: [authorization, content-type]
@@ -115,15 +192,22 @@ Resources:
       FunctionName: !Sub "gatemaster-api-${Stage}"
       CodeUri: backend/
       Handler: app.lambda_api.handler
-    Metadata:
-      BuildMethod: python3.11
-      BuildProperties:
-        # The API's own manifest: no pymupdf, lxml or Pillow, none of
-        # which any route imports. 137 MB against 230 for one shared set.
-        Manifest: requirements-lambda.txt
       # Below API Gateway's own 29s cap, so a slow request fails as a
       # Lambda timeout with a logged stack rather than an opaque 504.
       Timeout: 28
+      # The enforced ceiling, and the one that actually bounds the bill.
+      # Gateway throttling is best-effort; this is not. It also caps the
+      # rate at which GB-seconds can be consumed, which is the half of
+      # the free tier that runs out first.
+      ReservedConcurrentExecutions: !Ref ApiReservedConcurrency
+      # 512 rather than the 1024 default. A cold start was measured at
+      # ~0.9s of import, which at 1024 MB is 0.9 GB-s -- so a
+      # cold-start-heavy flood would exhaust 400,000 GB-s at ~490,000
+      # requests, before the request cap was anywhere near. Halving the
+      # memory doubles the requests the GB-second allowance covers. These
+      # routes are IO-bound on Postgres and Gemini, not CPU-bound, so the
+      # proportionally slower CPU costs little.
+      MemorySize: 512
       Environment:
         Variables:
           WORKER_FUNCTION_NAME: !Ref WorkerFunction
@@ -149,6 +233,17 @@ Resources:
             ApiId: !Ref Api
             Path: /
             Method: ANY
+    Metadata:
+      # Build-time only. Everything that configures the deployed function
+      # belongs under Properties -- Timeout, Environment, Policies and
+      # Events were all nested here, where CloudFormation ignores them,
+      # so the API would have deployed with no routes, no environment and
+      # no permission to invoke the worker.
+      BuildMethod: python3.11
+      BuildProperties:
+        # The API's own manifest: no pymupdf, lxml or Pillow, none of
+        # which any route imports. 137 MB against 230 for one shared set.
+        Manifest: requirements-lambda.txt
 
   # ------------------------------------------------------------- worker
 
@@ -158,14 +253,16 @@ Resources:
       FunctionName: !Sub "gatemaster-worker-${Stage}"
       CodeUri: backend/
       Handler: app.lambda_worker.handler
-    Metadata:
-      BuildMethod: python3.11
-      BuildProperties:
-        Manifest: requirements-lambda-worker.txt
       # The reason this function exists. Gemini generation with retries
       # was measured at over five minutes against a rate-limited key.
       Timeout: 900
       MemorySize: 2048
+      # The worker is invoked only by the API, never by the public, so
+      # its exposure is bounded by the API's own concurrency. This caps
+      # the damage a runaway import loop could do to the GB-second
+      # allowance: 2048 MB for 900s is 1,800 GB-s per invocation, and
+      # 400,000 GB-s is only 222 of those.
+      ReservedConcurrentExecutions: 2
       # One retry, not the default two: these jobs call a rate-limited
       # API, and a third attempt during a 429 window spends quota to fail
       # again. Failures land on the paper or message row either way, so
@@ -181,6 +278,11 @@ Resources:
             BucketName: !Ref UploadBucket
         - SQSSendMessagePolicy:
             QueueName: !GetAtt DeadLetterQueue.QueueName
+    Metadata:
+      # Build-time only; see the note on ApiFunction.
+      BuildMethod: python3.11
+      BuildProperties:
+        Manifest: requirements-lambda-worker.txt
 
   DeadLetterQueue:
     Type: AWS::SQS::Queue
@@ -211,6 +313,182 @@ Resources:
             Status: Enabled
             Prefix: uploads/
             ExpirationInDays: 1
+
+  # ------------------------------------------- free-tier guardrails
+
+  ApiAccessLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/http-api/gatemaster-${Stage}"
+      # Logs are billed after 5 GB/month free, and an attack is exactly
+      # when the volume spikes. Two weeks is enough to investigate one
+      # and short enough that the logs cannot themselves become the bill.
+      RetentionInDays: 14
+
+  # The hard stop. Subscribed to the same topic as the email alerts, so
+  # the alarm that tells you also acts.
+  KillSwitchFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "gatemaster-killswitch-${Stage}"
+      CodeUri: backend/
+      Handler: app.lambda_killswitch.handler
+      # Nothing but a boto3 call; the default 1024 MB would be waste.
+      MemorySize: 128
+      Timeout: 30
+      Environment:
+        Variables:
+          PROTECTED_FUNCTION_NAME: !Ref ApiFunction
+      Policies:
+        # Exactly one action on exactly one function. A broader policy
+        # here would let an alarm disable anything in the account.
+        - Statement:
+            - Effect: Allow
+              Action: lambda:PutFunctionConcurrency
+              Resource: !GetAtt ApiFunction.Arn
+      Events:
+        Alarm:
+          Type: SNS
+          Properties:
+            Topic: !Ref KillSwitchTopic
+    Metadata:
+      BuildMethod: python3.11
+      BuildProperties:
+        # boto3 is in the Lambda runtime already, so this needs nothing.
+        Manifest: requirements-lambda-killswitch.txt
+
+  # A separate topic from AlertTopic, so a routine 80%-of-budget warning
+  # cannot take the API down -- only the spike alarm reaches this one.
+  KillSwitchTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "gatemaster-killswitch-${Stage}"
+
+  AlertTopic:
+    Condition: HasAlertEmail
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "gatemaster-alerts-${Stage}"
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref AlertEmail
+
+  # Catches a flood in minutes. Lambda's own Invocations metric is the
+  # thing being rationed, and CloudWatch publishes it within ~1 minute --
+  # unlike Cost Explorer, which lags 8-24 hours and would report the
+  # attack a day after the free tier was gone.
+  InvocationSpikeAlarm:
+    Condition: HasAlertEmail
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "gatemaster-${Stage}-invocation-spike"
+      AlarmDescription: >
+        More invocations in five minutes than a studying human could
+        cause. At the default this is ~33 rps sustained for 5 minutes.
+      Namespace: AWS/Lambda
+      MetricName: Invocations
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ApiFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 10000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      # Both: tell the human, and turn the API off. The kill switch is on
+      # this alarm only -- the slower budget warnings must not disable
+      # anything by themselves.
+      AlarmActions:
+        - !Ref AlertTopic
+        - !Ref KillSwitchTopic
+
+  # The monthly view. 80% of the request budget, evaluated hourly, so
+  # there is time to react before the allowance is gone rather than
+  # finding out from a bill.
+  MonthlyUsageAlarm:
+    Condition: HasAlertEmail
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "gatemaster-${Stage}-monthly-usage-80pct"
+      AlarmDescription: >
+        Invocations over the last 30 days passed 80% of
+        MonthlyRequestBudget.
+      Namespace: AWS/Lambda
+      MetricName: Invocations
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ApiFunction
+      Statistic: Sum
+      # 30 days in seconds. The longest period CloudWatch accepts is
+      # 86,400, so this is 30 one-day periods summed instead.
+      Period: 86400
+      EvaluationPeriods: 30
+      DatapointsToAlarm: 1
+      Threshold: !Ref MonthlyRequestBudget
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+
+  # Throttling is the signal that the gateway or reserved concurrency is
+  # actually rejecting traffic. A few are normal under a burst; a sustained
+  # count means either an attack or a limit set too low for real use.
+  ThrottleAlarm:
+    Condition: HasAlertEmail
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "gatemaster-${Stage}-throttled"
+      AlarmDescription: >
+        Requests are being rejected. Either traffic is being shed as
+        intended, or ApiReservedConcurrency is too low for genuine use.
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ApiFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 100
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+
+  # A money backstop, not a traffic control. It cannot stop an attack --
+  # AWS cost data is 8-24 hours behind -- but it is the thing that tells
+  # you the free tier was exceeded at all, and $1 is low enough that it
+  # fires on the first dollar rather than after twenty.
+  CostBudget:
+    Condition: HasAlertEmail
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub "gatemaster-${Stage}-cost"
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: 1
+          Unit: USD
+      NotificationsWithSubscribers:
+        # Actual spend, at the first cent over.
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 1
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+        # And the forecast, which is the only one that can warn before
+        # the money is spent.
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
 
 Outputs:
   ApiUrl:

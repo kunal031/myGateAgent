@@ -4,13 +4,15 @@ Composition only: configuration lives in core/, behaviour in services/,
 and HTTP handling in api/.
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from .api import (
     agent, auth, assistant, exam, feed, papers, profile, quiz, stats,
     syllabus,
 )
+from .core import throttle
 from .core.cache import stats as cache_stats
 from .core.config import settings
 from .core.lifespan import lifespan
@@ -31,6 +33,40 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def rate_limit(request: Request, call_next):
+    """Shed a caller making far more requests than a person could.
+
+    First middleware registered, so it runs before anything that costs a
+    database connection or an API call -- a throttled request should cost
+    nothing but the check itself.
+
+    Returns 429 with Retry-After, which is what a well-behaved client
+    backs off on. The frontend's ApiClient treats a non-2xx as an
+    ApiError carrying the status, so the UI can say "slow down" rather
+    than "something went wrong".
+    """
+    if (
+        settings.RATE_LIMIT_PER_IP <= 0
+        or request.url.path in settings.RATE_LIMIT_EXEMPT
+    ):
+        return await call_next(request)
+
+    caller = throttle.client_ip(request.headers)
+    allowed, _count = throttle.check(
+        caller,
+        limit=settings.RATE_LIMIT_PER_IP,
+        window=settings.RATE_LIMIT_WINDOW,
+    )
+    if not allowed:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Too many requests. Please slow down."},
+            headers={"Retry-After": str(settings.RATE_LIMIT_WINDOW)},
+        )
+    return await call_next(request)
+
 
 app.include_router(auth.router)
 app.include_router(syllabus.router)
