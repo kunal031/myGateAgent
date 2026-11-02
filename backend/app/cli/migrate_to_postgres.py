@@ -52,7 +52,21 @@ TABLE_ORDER = [
     # In-flight sign-ins. Copied so the list is exhaustive; rows are
     # short-lived and almost always zero.
     "pending_oauth",
+    # One row per live refresh token. Carried so a migration does not
+    # sign every device out: a token whose row is missing is treated as
+    # pre-rotation and adopted, which works but loses the reuse
+    # detection that row existed for.
+    "refresh_sessions",
 ]
+
+#: Never copied, and each for a reason.
+#:
+#: alembic_version is the TARGET's own record of which migrations it has
+#: run. Copying the source's value would tell the target it is at a
+#: revision it may never have applied -- the next `upgrade head` would
+#: then skip real work and leave the schema short. The target is stamped
+#: or upgraded by Alembic itself, not by this script.
+EXCLUDED_TABLES = {"alembic_version"}
 
 # Postgres rejects a text value in a halfvec column, so the embedding is
 # never copied as an ordinary column. It is carried separately: from the
@@ -291,7 +305,9 @@ def audit_tables(source_engine) -> list[str]:
                 "WHERE table_schema = 'public'"
             ))
         }
-    return sorted(live - set(TABLE_ORDER))
+    # EXCLUDED_TABLES are deliberately not copied, so their absence from
+    # TABLE_ORDER is correct rather than an oversight.
+    return sorted(live - set(TABLE_ORDER) - EXCLUDED_TABLES)
 
 
 def main() -> None:
