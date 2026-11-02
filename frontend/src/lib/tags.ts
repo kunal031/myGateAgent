@@ -8,7 +8,7 @@
  * array would lose the guarantee that ancestry is singular.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
+import { api } from "./client/web";
 
 /** Closed vocabulary; mirrors TagType in the backend. */
 export type TagTypeValue =
@@ -115,14 +115,6 @@ export interface TagInput {
   note?: string;
 }
 
-async function json<T>(res: Response, fallback: string): Promise<T> {
-  if (!res.ok) {
-    const detail = await res.json().catch(() => null);
-    throw new Error(detail?.detail ?? fallback);
-  }
-  return res.json();
-}
-
 /**
  * Ancestry and tags for one card.
  *
@@ -134,8 +126,7 @@ export async function fetchCardMetadata(
   cardId: number,
   signal?: AbortSignal,
 ): Promise<CardMetadata> {
-  const res = await fetch(`${API_BASE}/api/feed/${cardId}/metadata`, { signal });
-  return json<CardMetadata>(res, "Could not load card metadata");
+  return api.get<CardMetadata>(`/api/feed/${cardId}/metadata`, { signal });
 }
 
 export async function fetchRelatedCards(
@@ -143,11 +134,9 @@ export async function fetchRelatedCards(
   limit = 8,
   signal?: AbortSignal,
 ): Promise<RelatedCard[]> {
-  const res = await fetch(
-    `${API_BASE}/api/feed/${cardId}/related?limit=${limit}`,
-    { signal },
+  const data = await api.get<{ items: RelatedCard[] }>(
+    `/api/feed/${cardId}/related`, { query: { limit }, signal },
   );
-  const data = await json<{ items: RelatedCard[] }>(res, "Could not load related cards");
   return data.items;
 }
 
@@ -155,12 +144,7 @@ export async function setCardTags(
   cardId: number,
   tags: TagInput[],
 ): Promise<CardMetadata> {
-  const res = await fetch(`${API_BASE}/api/feed/${cardId}/tags`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(tags),
-  });
-  return json<CardMetadata>(res, "Could not save tags");
+  return api.put<CardMetadata>(`/api/feed/${cardId}/tags`, tags);
 }
 
 export async function browseTags(
@@ -172,11 +156,9 @@ export async function browseTags(
   if (params.q) search.set("q", params.q);
   if (params.limit) search.set("limit", String(params.limit));
 
-  const res = await fetch(
-    `${API_BASE}/api/feed/tags/browse?${search.toString()}`,
-    { signal },
-  );
-  return json(res, "Could not load tags");
+  return api.get(`/api/feed/tags/browse`, {
+    query: Object.fromEntries(search), signal,
+  });
 }
 
 /** Flatten groups back to one list, for a compact inline display. */

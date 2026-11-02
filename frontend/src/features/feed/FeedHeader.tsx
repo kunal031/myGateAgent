@@ -1,9 +1,8 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { api } from "@/lib/client/web";
 import { ArrowRight, CheckCircle2, Clock } from "lucide-react";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 
 interface Progress {
   concepts_total: number;
@@ -32,12 +31,16 @@ export default function FeedHeader({ subjectSlug, refreshKey = 0 }: Props) {
 
   useEffect(() => {
     const controller = new AbortController();
-    const search = subjectSlug && subjectSlug !== "all"
-      ? `?subject_slug=${encodeURIComponent(subjectSlug)}`
-      : "";
-    fetch(`${API_BASE}/api/feed/progress${search}`, { signal: controller.signal })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => data && setProgress(data))
+    // Through the shared client, like every other call. This used a bare
+    // fetch and only ever carried a token because the old interceptor
+    // patched window.fetch globally -- so it would have started
+    // returning 401 the moment that patch was removed.
+    api
+      .get<Progress>("/api/feed/progress", {
+        query: { subject_slug: subjectSlug },
+        signal: controller.signal,
+      })
+      .then((data) => setProgress(data))
       .catch(() => {});
     return () => controller.abort();
   }, [subjectSlug, refreshKey]);
