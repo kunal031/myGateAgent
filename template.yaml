@@ -116,6 +116,18 @@ Parameters:
       is the wrong choice: cost data lags 8-24 hours, so an alarm is the
       only thing that tells you an attack happened at all.
 
+  GoogleRedirectUri:
+    Type: String
+    Default: ""
+    Description: >
+      Where Google sends the browser back, e.g.
+      https://abc123.execute-api.ap-southeast-1.amazonaws.com/api/auth/google/callback
+
+      Empty on a first deploy, because the API's id is not known until the
+      stack exists. Read ApiUrl from the stack outputs afterwards and
+      redeploy with this set, then paste the same string into the Google
+      Cloud console's Authorised redirect URIs.
+
   FrontendOrigin:
     Type: String
     Default: http://localhost:3000
@@ -211,9 +223,17 @@ Resources:
       Environment:
         Variables:
           WORKER_FUNCTION_NAME: !Ref WorkerFunction
-          GOOGLE_REDIRECT_URI: !Sub
-            - "https://${ApiId}.execute-api.${AWS::Region}.amazonaws.com/api/auth/google/callback"
-            - ApiId: !Ref Api
+          # A parameter, not !Ref Api. Referencing the API here made the
+          # function depend on it, while the API's stage depends on the
+          # function's invoke permission -- the last edge of the circular
+          # dependency that blocked five deploys.
+          #
+          # It has to be set by hand anyway: this exact string must also
+          # appear in Google's "Authorised redirect URIs", byte for byte,
+          # or sign-in fails with redirect_uri_mismatch. Leave it empty on
+          # the first deploy, read ApiUrl from the outputs, then redeploy
+          # with it set.
+          GOOGLE_REDIRECT_URI: !Ref GoogleRedirectUri
       Policies:
         # Dispatch only: the API may start a job and never run one.
         - LambdaInvokePolicy:
