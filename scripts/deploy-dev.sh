@@ -37,6 +37,19 @@ esac
 
 JWT=$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')
 
+# The redirect URI contains the API's own id, which does not exist until
+# the stack does. Read it back from the previous deploy when there is
+# one, so a second run wires Google sign-in without being told the URL.
+# Empty on the very first deploy, which is why startup_checks only
+# refuses when the Google client id and secret are also set.
+REDIRECT=$(aws cloudformation describe-stacks   --stack-name gateai-dev --region ap-southeast-1   --query "Stacks[0].Outputs[?OutputKey=='GoogleRedirectUri'].OutputValue"   --output text 2>/dev/null || true)
+[ "$REDIRECT" = "None" ] && REDIRECT=""
+if [ -n "$REDIRECT" ]; then
+  echo "google redirect: $REDIRECT"
+else
+  echo "google redirect: not yet known (first deploy); re-run after this one"
+fi
+
 sam deploy \
   --stack-name gateai-dev \
   --region ap-southeast-1 \
@@ -53,4 +66,5 @@ sam deploy \
     GoogleClientId="$GCID" \
     GoogleClientSecret="$GCSECRET" \
     FallbackApiKey="$FALLBACK" \
+    GoogleRedirectUri="$REDIRECT" \
     FrontendOrigin=http://localhost:3000
