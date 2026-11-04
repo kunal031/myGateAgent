@@ -256,7 +256,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "gatemaster-api-${Stage}"
-      CodeUri: build/lambda-src/
+      CodeUri: build/lambda-api/
       Handler: app.lambda_api.handler
       # Below API Gateway's own 29s cap, so a slow request fails as a
       # Lambda timeout with a logged stack rather than an opaque 504.
@@ -269,14 +269,25 @@ Resources:
         - ReserveApiConcurrency
         - !Ref ApiReservedConcurrency
         - !Ref AWS::NoValue
-      # 512 rather than the 1024 default. A cold start was measured at
-      # ~0.9s of import, which at 1024 MB is 0.9 GB-s -- so a
-      # cold-start-heavy flood would exhaust 400,000 GB-s at ~490,000
-      # requests, before the request cap was anywhere near. Halving the
-      # memory doubles the requests the GB-second allowance covers. These
-      # routes are IO-bound on Postgres and Gemini, not CPU-bound, so the
-      # proportionally slower CPU costs little.
-      MemorySize: 512
+      # 1769 MB is one full vCPU, and this is bought for CPU, not RAM --
+      # measured peak usage is 202 MB at every setting.
+      #
+      # The earlier reasoning here was wrong. It assumed these routes are
+      # IO-bound so a slower CPU would cost little, and set 512 MB to
+      # stretch the GB-second allowance. But Lambda scales CPU with
+      # memory, and the cold start is dominated by importing FastAPI,
+      # SQLAlchemy and google-genai, which is pure CPU. Measured against
+      # the deployed function:
+      #
+      #    512 MB   17.1 s cold   (app import 14.1 s)
+      #   1024 MB    8.9 s cold
+      #   1769 MB    5.1 s cold   (app import  3.8 s)
+      #
+      # It is also cheaper. A cold start costs 7.63 GB-s at 1769 MB
+      # against 8.13 GB-s at 512 MB: the speedup outpaces the higher
+      # rate. Warm requests cost more (0.0069 vs 0.0025 GB-s) but are
+      # 4-5 ms, so the free tier still covers ~58 million of them.
+      MemorySize: 1769
       Environment:
         Variables:
           WORKER_FUNCTION_NAME: !Ref WorkerFunction
@@ -328,7 +339,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "gatemaster-worker-${Stage}"
-      CodeUri: build/lambda-src/
+      CodeUri: build/lambda-worker/
       Handler: app.lambda_worker.handler
       # The reason this function exists. Gemini generation with retries
       # was measured at over five minutes against a rate-limited key.
@@ -411,7 +422,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "gatemaster-killswitch-${Stage}"
-      CodeUri: build/lambda-src/
+      CodeUri: build/lambda-killswitch/
       Handler: app.lambda_killswitch.handler
       # Nothing but a boto3 call; the default 1024 MB would be waste.
       MemorySize: 128

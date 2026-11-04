@@ -28,6 +28,28 @@ interface Props {
  * scroll position. Rendering it inline pushed the feed down and lost the
  * card the student was reading.
  */
+/** A spinner with elapsed seconds, shown while an answer generates.
+ *
+ *  The count is the point: generation runs 20-60s once Gemini's quota is
+ *  exhausted and the request falls back to the second provider, and a
+ *  spinner with no progress at all reads as a hung page. */
+function PendingAnswer() {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setSeconds((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <p className="flex items-center gap-2 text-[13px] font-semibold"
+       style={{ color: "var(--ink-faint)" }}>
+      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      Writing an answer{seconds > 2 ? ` \u00b7 ${seconds}s` : ""}
+    </p>
+  );
+}
+
+
 export default function ChatPanel({
   threadId, language, onClose, card = null, pending = false,
 }: Props) {
@@ -39,17 +61,39 @@ export default function ChatPanel({
   const inputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
 
+  // Polls while anything is pending. /api/assistant/ask returns as soon
+  // as the placeholder row exists and the answer is written by a
+  // background job, so a single fetch showed an empty assistant bubble
+  // that only filled in on a manual reload. Generation has been measured
+  // at 20-60s once the Gemini quota is exhausted and the request falls
+  // back to the second provider.
   useEffect(() => {
     if (threadId === null) return;
     let cancelled = false;
-    fetchThread(threadId)
-      .then((thread) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const load = async () => {
+      try {
+        const thread = await fetchThread(threadId);
         if (cancelled) return;
         setTitle(thread.title);
         setMessages(thread.messages);
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
+        if (thread.messages.some((m) => m.status === "pending")) {
+          // 2s: fast enough to feel live, slow enough that a long
+          // generation is not hundreds of requests.
+          timer = setTimeout(load, 2000);
+        }
+      } catch {
+        // A dropped poll is not worth surfacing; the next one recovers.
+        if (!cancelled) timer = setTimeout(load, 4000);
+      }
+    };
+    void load();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [threadId]);
 
   useEffect(() => {
@@ -193,10 +237,24 @@ export default function ChatPanel({
                  style={{ color: "var(--ink-faint)" }}>
                 {message.role === "user" ? "You" : "Tutor"}
               </p>
-              <div className="overflow-x-auto text-[13px] leading-relaxed"
-                   style={{ color: "var(--ink)" }}>
-                <MathText text={message.content} />
-              </div>
+              {message.status === "pending" ? (
+                // A pending assistant row has empty content, so without
+                // this the bubble was blank with no sign anything was
+                // happening. The elapsed seconds matter because
+                // generation can take a minute on the fallback provider
+                // -- a bare spinner reads as stuck.
+                <PendingAnswer />
+              ) : message.status === "failed" ? (
+                <p className="text-[13px] font-semibold"
+                   style={{ color: "var(--danger-ink, var(--ink))" }}>
+                  {message.error || "That answer could not be generated."}
+                </p>
+              ) : (
+                <div className="overflow-x-auto text-[13px] leading-relaxed"
+                     style={{ color: "var(--ink)" }}>
+                  <MathText text={message.content} />
+                </div>
+              )}
               {message.citations.length > 0 && (
                 <ul className="mt-2 space-y-0.5">
                   {message.citations.slice(0, 4).map((citation, i) => (

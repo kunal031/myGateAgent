@@ -289,15 +289,35 @@ def generate_grounded(
     # waiting on must not queue behind a batch of them either.
     (interactive_limiter if interactive else search_limiter).acquire()
 
-    response = _with_deadline(
-        get_client().models.generate_content,
-        model=model,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            temperature=temperature,
-            tools=[types.Tool(google_search=types.GoogleSearch())],
-        ),
-    )
+    try:
+        response = _with_deadline(
+            get_client().models.generate_content,
+            model=model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=temperature,
+                tools=[types.Tool(google_search=types.GoogleSearch())],
+            ),
+        )
+    except Exception as exc:
+        # generate_text has fallen back to the second provider on a quota
+        # error since it was written; this function never did. The result
+        # was the worst kind of failure: the assistant stored an empty
+        # answer with status "ready", so the UI showed a question that had
+        # apparently been answered with nothing. No error anywhere.
+        #
+        # The fallback cannot search the web, so the answer comes back
+        # with no web citations. That is the right trade here: the
+        # assistant already retrieves from the indexed corpus and passes
+        # those excerpts in the prompt, so an answer grounded in the books
+        # is still an answer. An empty one never is.
+        if not is_quota_error(exc) or not fallback.configured():
+            raise
+        logger.warning(
+            "Gemini quota exhausted on a grounded call; falling back to %s "
+            "without web search", settings.FALLBACK_MODEL,
+        )
+        return {"text": fallback.generate_text(prompt).strip(), "citations": []}
 
     citations = []
     try:

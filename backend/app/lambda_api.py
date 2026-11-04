@@ -33,11 +33,31 @@ _handler = None
 
 
 def _build():
-    """Create the Mangum handler once per container."""
+    """Create the Mangum handler once per container.
+
+    Each step is timed and logged. The first invocation of a cold
+    container was taking ~16 s while Lambda's own Init Duration was
+    ~70 ms, and guessing at the cause cost several deploys -- the
+    numbers belong in CloudWatch where they can be read.
+    """
+    import time
+
+    t0 = time.perf_counter()
     from mangum import Mangum
+    t_mangum = time.perf_counter()
 
     from .core.startup_checks import check_configuration
+    t_checks = time.perf_counter()
+
     from .main import app
+    t_app = time.perf_counter()
+
+    logger.info(
+        "coldstart: mangum=%.0fms checks_import=%.0fms app_import=%.0fms",
+        (t_mangum - t0) * 1000,
+        (t_checks - t_mangum) * 1000,
+        (t_app - t_checks) * 1000,
+    )
 
     # Lambda runs with lifespan off, so the startup hook never fires.
     # Checking here means a misconfigured function fails on its first
