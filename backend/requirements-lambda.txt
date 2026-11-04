@@ -55,4 +55,13 @@ numpy==2.2.6
 tenacity==9.1.4
 
 httpx==0.28.1
+# The API imports services/import_paper/fetch.py at module level -- it is
+# a route handler's dependency, not a lazy one -- and that module parses
+# a fetched question page with BeautifulSoup(html, "lxml"). Removing
+# these broke every request with ModuleNotFoundError: No module named
+# 'bs4'. Together they are 12.6 MB against pymupdf's 54 MB, which stays
+# out because its only caller is a background job that runs in the
+# worker.
+beautifulsoup4==4.15.0
+lxml==6.1.3
 python-dotenv==1.2.4
