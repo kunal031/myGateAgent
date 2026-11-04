@@ -227,11 +227,16 @@ Resources:
       # it". Without them an attack leaves no evidence at all.
       AccessLogSettings:
         DestinationArn: !GetAtt ApiAccessLogs.Arn
+        # $context.requestId is mandatory -- API Gateway rejects any
+        # format without it or $context.extendedRequestId, and the stack
+        # rolls back. It is also the field that ties a log line to the
+        # Lambda invocation that produced it, so it belongs here anyway.
         Format: >
-          {"t":"$context.requestTime","ip":"$context.identity.sourceIp",
-          "m":"$context.httpMethod","p":"$context.path",
-          "s":"$context.status","err":"$context.error.message",
-          "lat":"$context.responseLatency","len":"$context.responseLength"}
+          {"id":"$context.requestId","t":"$context.requestTime",
+          "ip":"$context.identity.sourceIp","m":"$context.httpMethod",
+          "p":"$context.path","s":"$context.status",
+          "err":"$context.error.message","lat":"$context.responseLatency",
+          "len":"$context.responseLength"}
       CorsConfiguration:
         AllowOrigins: [!Ref FrontendOrigin]
         AllowHeaders: [authorization, content-type]
