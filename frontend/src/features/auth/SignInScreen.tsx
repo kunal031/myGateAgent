@@ -40,6 +40,12 @@ export default function SignInScreen() {
   const [googleReady, setGoogleReady] = useState(false);
   useEffect(() => { googleEnabled().then(setGoogleReady); }, []);
 
+  //: Password registration is closed to everyone after the first account
+  //: -- /api/auth/register answers 403 and says to use Google. So the
+  //: sign-up view hides the password form entirely rather than offering
+  //: one that cannot succeed.
+  const googleOnlySignUp = googleReady && mode === "up";
+
   // A failed Google return should be visible on the form it bounced to.
   useEffect(() => { if (oauthError) setError(oauthError); }, [oauthError]);
 
@@ -100,16 +106,21 @@ export default function SignInScreen() {
               Continue with Google
             </button>
 
-            <div className="flex items-center gap-2 py-1">
-              <span className="h-px flex-1" style={{ background: "var(--line)" }} />
-              <span className="text-[10px] font-extrabold uppercase tracking-wider"
-                    style={{ color: "var(--ink-faint)" }}>or</span>
-              <span className="h-px flex-1" style={{ background: "var(--line)" }} />
-            </div>
+            {/* Only when something follows it. On the sign-up view the
+                password form is hidden, so an "or" would divide the
+                Google button from nothing. */}
+            {!googleOnlySignUp && (
+              <div className="flex items-center gap-2 py-1">
+                <span className="h-px flex-1" style={{ background: "var(--line)" }} />
+                <span className="text-[10px] font-extrabold uppercase tracking-wider"
+                      style={{ color: "var(--ink-faint)" }}>or</span>
+                <span className="h-px flex-1" style={{ background: "var(--line)" }} />
+              </div>
+            )}
           </>
         )}
 
-        {mode === "up" && (
+        {mode === "up" && !googleOnlySignUp && (
           <label className="block">
             <span className="mb-1 block text-[10px] font-extrabold uppercase tracking-wider"
                   style={{ color: "var(--ink-faint)" }}>Name</span>
@@ -123,6 +134,17 @@ export default function SignInScreen() {
           </label>
         )}
 
+        {googleOnlySignUp && (
+          <p className="rounded-[var(--radius)] px-3 py-3 text-[12px] leading-relaxed"
+             style={{ background: "var(--surface)", color: "var(--ink-faint)",
+                      border: "var(--line-width) solid var(--line)" }}>
+            Accounts are created with Google, which has already verified
+            your email address. Use <strong style={{ color: "var(--ink)" }}>
+            Continue with Google</strong> above.
+          </p>
+        )}
+
+        {!googleOnlySignUp && (
         <label className="block">
           <span className="mb-1 block text-[10px] font-extrabold uppercase tracking-wider"
                 style={{ color: "var(--ink-faint)" }}>Email</span>
@@ -136,7 +158,9 @@ export default function SignInScreen() {
             style={field}
           />
         </label>
+        )}
 
+        {!googleOnlySignUp && (
         <label className="block">
           <span className="mb-1 block text-[10px] font-extrabold uppercase tracking-wider"
                 style={{ color: "var(--ink-faint)" }}>Password</span>
@@ -156,6 +180,7 @@ export default function SignInScreen() {
             </span>
           )}
         </label>
+        )}
 
         {error && (
           <p className="rounded-[var(--radius)] px-3 py-2 text-[12px] font-semibold"
@@ -165,6 +190,7 @@ export default function SignInScreen() {
           </p>
         )}
 
+        {!googleOnlySignUp && (
         <button
           type="submit"
           disabled={busy}
@@ -176,28 +202,23 @@ export default function SignInScreen() {
                 : <LogIn className="h-4 w-4" />}
           {mode === "in" ? "Sign in" : "Create account"}
         </button>
-
-        {/* Hidden once Google is configured: password registration is
-            closed to everyone but the very first account, so a visible
-            "create one" link would lead straight to a 403. */}
-        {!googleReady && (
-          <button
-            type="button"
-            onClick={() => { setMode(mode === "in" ? "up" : "in"); setError(""); }}
-            className="w-full text-[11px] font-semibold"
-            style={{ color: "var(--ink-faint)" }}
-          >
-            {mode === "in"
-              ? "No account yet? Create one"
-              : "Already have an account? Sign in"}
-          </button>
         )}
 
-        {googleReady && mode === "in" && (
-          <p className="text-center text-[11px]" style={{ color: "var(--ink-faint)" }}>
-            New here? Use Google above — it verifies your email.
-          </p>
-        )}
+        {/* Always clickable. With Google configured the "up" view does not
+            offer a password form -- registration by password is closed to
+            everyone after the first account and would return 403 -- so it
+            explains that and points at the Google button instead. Hiding
+            the link entirely left new users with nothing to click. */}
+        <button
+          type="button"
+          onClick={() => { setMode(mode === "in" ? "up" : "in"); setError(""); }}
+          className="w-full text-[11px] font-semibold underline underline-offset-2"
+          style={{ color: "var(--ink-faint)" }}
+        >
+          {mode === "in"
+            ? "No account yet? Create one"
+            : "Already have an account? Sign in"}
+        </button>
       </form>
     </div>
   );
