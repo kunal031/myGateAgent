@@ -80,6 +80,22 @@ Parameters:
       less than half the request allowance. 700,000 leaves headroom under
       both at 512 MB.
 
+  WeeklyRequestBudget:
+    Type: Number
+    Default: 160000
+    MinValue: 1000
+    Description: >
+      A week's share of MonthlyRequestBudget, used by the usage alarm.
+
+      Separate parameter rather than arithmetic on MonthlyRequestBudget,
+      because CloudFormation cannot divide. 160,000 is roughly
+      700,000 * 7/30, so crossing it in any rolling week means the
+      current pace would exceed the monthly budget.
+
+      CloudWatch cannot express a 30-day window at all: an alarm whose
+      EvaluationPeriods * Period exceeds 604,800 seconds is rejected
+      outright when the period is an hour or more.
+
   SustainedRateLimit:
     Type: Number
     Default: 20
@@ -99,14 +115,32 @@ Parameters:
 
   ApiReservedConcurrency:
     Type: Number
-    Default: 10
+    Default: 0
+    MinValue: 0
     Description: >
-      The actual ceiling, and the only one of these that is a hard limit.
-      Gateway throttling is best-effort by AWS's own documentation;
-      reserved concurrency is enforced by Lambda. 10 concurrent
-      executions at ~60ms each is about 166 rps of real capacity, well
-      above one user's need, and it caps how fast GB-seconds can possibly
-      be spent no matter what the gateway admits.
+      Reserved concurrency for the API. 0 means do not set it at all.
+
+      0 is the default because a new AWS account has a total concurrency
+      limit of 10, and AWS requires all 10 to stay unreserved -- so any
+      reservation is refused and the whole stack rolls back with
+      "decreases account's UnreservedConcurrentExecution below its
+      minimum value of [10]".
+
+      That is not a loss of protection: the account-wide limit is itself
+      a hard ceiling, enforced by AWS across every function, which is
+      stricter than reserving a slice for one. Once Service Quotas
+      raises "Concurrent executions" (ask for 1,000, the normal default),
+      set this to a real number and redeploy. A reservation then also
+      guarantees the API capacity the worker cannot take.
+
+  WorkerReservedConcurrency:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    Description: >
+      Reserved concurrency for the worker. 0 means none, like
+      ApiReservedConcurrency -- see the note there for why a new account
+      cannot reserve any.
 
   AlertEmail:
     Type: String
@@ -115,6 +149,18 @@ Parameters:
       Where budget and usage alarms go. Empty disables the alarms, which
       is the wrong choice: cost data lags 8-24 hours, so an alarm is the
       only thing that tells you an attack happened at all.
+
+  GoogleRedirectUri:
+    Type: String
+    Default: ""
+    Description: >
+      Where Google sends the browser back, e.g.
+      https://abc123.execute-api.ap-southeast-1.amazonaws.com/api/auth/google/callback
+
+      Empty on a first deploy, because the API's id is not known until the
+      stack exists. Read ApiUrl from the stack outputs afterwards and
+      redeploy with this set, then paste the same string into the Google
+      Cloud console's Authorised redirect URIs.
 
   FrontendOrigin:
     Type: String
@@ -127,6 +173,14 @@ Conditions:
   # they are created but silent, which is worse than not created: it
   # looks like monitoring exists.
   HasAlertEmail: !Not [!Equals [!Ref AlertEmail, ""]]
+  #: 0 means "do not set the property at all". A brand-new AWS account
+  #: has a total concurrency limit of 10 and AWS requires all 10 stay
+  #: unreserved, so any reservation is rejected outright with
+  #: "decreases account's UnreservedConcurrentExecution below its
+  #: minimum value of [10]" -- and the whole stack rolls back. Once the
+  #: account limit is raised, set these parameters and redeploy.
+  ReserveApiConcurrency: !Not [!Equals [!Ref ApiReservedConcurrency, 0]]
+  ReserveWorkerConcurrency: !Not [!Equals [!Ref WorkerReservedConcurrency, 0]]
 
 Globals:
   Function:
@@ -158,7 +212,14 @@ Resources:
   Api:
     Type: AWS::Serverless::HttpApi
     Properties:
-      StageName: !Ref Stage
+      # $default, not the stage name. A named stage serves under
+      # /{stage}, so /api/health became /dev/api/health -- every path the
+      # frontend and the Google redirect use would need the prefix, and
+      # they would differ between dev and prod. $default serves at the
+      # root, so a deployed URL has the same shape as localhost:8000.
+      # The stacks are already separated by name, so the stage adds
+      # nothing but a prefix to get wrong.
+      StageName: $default
       # First layer. Applies to every route on the stage, so a new route
       # is throttled the moment it exists rather than when someone
       # remembers to add it.
@@ -173,11 +234,16 @@ Resources:
       # it". Without them an attack leaves no evidence at all.
       AccessLogSettings:
         DestinationArn: !GetAtt ApiAccessLogs.Arn
+        # $context.requestId is mandatory -- API Gateway rejects any
+        # format without it or $context.extendedRequestId, and the stack
+        # rolls back. It is also the field that ties a log line to the
+        # Lambda invocation that produced it, so it belongs here anyway.
         Format: >
-          {"t":"$context.requestTime","ip":"$context.identity.sourceIp",
-          "m":"$context.httpMethod","p":"$context.path",
-          "s":"$context.status","err":"$context.error.message",
-          "lat":"$context.responseLatency","len":"$context.responseLength"}
+          {"id":"$context.requestId","t":"$context.requestTime",
+          "ip":"$context.identity.sourceIp","m":"$context.httpMethod",
+          "p":"$context.path","s":"$context.status",
+          "err":"$context.error.message","lat":"$context.responseLatency",
+          "len":"$context.responseLength"}
       CorsConfiguration:
         AllowOrigins: [!Ref FrontendOrigin]
         AllowHeaders: [authorization, content-type]
@@ -190,7 +256,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "gatemaster-api-${Stage}"
-      CodeUri: backend/
+      CodeUri: build/lambda-src/
       Handler: app.lambda_api.handler
       # Below API Gateway's own 29s cap, so a slow request fails as a
       # Lambda timeout with a logged stack rather than an opaque 504.
@@ -199,7 +265,10 @@ Resources:
       # Gateway throttling is best-effort; this is not. It also caps the
       # rate at which GB-seconds can be consumed, which is the half of
       # the free tier that runs out first.
-      ReservedConcurrentExecutions: !Ref ApiReservedConcurrency
+      ReservedConcurrentExecutions: !If
+        - ReserveApiConcurrency
+        - !Ref ApiReservedConcurrency
+        - !Ref AWS::NoValue
       # 512 rather than the 1024 default. A cold start was measured at
       # ~0.9s of import, which at 1024 MB is 0.9 GB-s -- so a
       # cold-start-heavy flood would exhaust 400,000 GB-s at ~490,000
@@ -211,9 +280,17 @@ Resources:
       Environment:
         Variables:
           WORKER_FUNCTION_NAME: !Ref WorkerFunction
-          GOOGLE_REDIRECT_URI: !Sub
-            - "https://${ApiId}.execute-api.${AWS::Region}.amazonaws.com/api/auth/google/callback"
-            - ApiId: !Ref Api
+          # A parameter, not !Ref Api. Referencing the API here made the
+          # function depend on it, while the API's stage depends on the
+          # function's invoke permission -- the last edge of the circular
+          # dependency that blocked five deploys.
+          #
+          # It has to be set by hand anyway: this exact string must also
+          # appear in Google's "Authorised redirect URIs", byte for byte,
+          # or sign-in fails with redirect_uri_mismatch. Leave it empty on
+          # the first deploy, read ApiUrl from the outputs, then redeploy
+          # with it set.
+          GOOGLE_REDIRECT_URI: !Ref GoogleRedirectUri
       Policies:
         # Dispatch only: the API may start a job and never run one.
         - LambdaInvokePolicy:
@@ -251,7 +328,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "gatemaster-worker-${Stage}"
-      CodeUri: backend/
+      CodeUri: build/lambda-src/
       Handler: app.lambda_worker.handler
       # The reason this function exists. Gemini generation with retries
       # was measured at over five minutes against a rate-limited key.
@@ -262,7 +339,10 @@ Resources:
       # the damage a runaway import loop could do to the GB-second
       # allowance: 2048 MB for 900s is 1,800 GB-s per invocation, and
       # 400,000 GB-s is only 222 of those.
-      ReservedConcurrentExecutions: 2
+      ReservedConcurrentExecutions: !If
+        - ReserveWorkerConcurrency
+        - !Ref WorkerReservedConcurrency
+        - !Ref AWS::NoValue
       # One retry, not the default two: these jobs call a rate-limited
       # API, and a third attempt during a 429 window spends quota to fail
       # again. Failures land on the paper or message row either way, so
@@ -331,21 +411,36 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "gatemaster-killswitch-${Stage}"
-      CodeUri: backend/
+      CodeUri: build/lambda-src/
       Handler: app.lambda_killswitch.handler
       # Nothing but a boto3 call; the default 1024 MB would be waste.
       MemorySize: 128
       Timeout: 30
       Environment:
         Variables:
-          PROTECTED_FUNCTION_NAME: !Ref ApiFunction
+          # Names built with !Sub rather than !Ref or !GetAtt, and
+          # UPLOAD_BUCKET overridden to empty, both to keep this function
+          # out of a dependency cycle.
+          #
+          # Globals gives every function UPLOAD_BUCKET: !Ref UploadBucket,
+          # which made the kill switch depend on the bucket. The API also
+          # depends on the bucket, the API's stage carries the alarms, and
+          # the alarms publish to the topic this function subscribes to --
+          # so CloudFormation saw a loop and refused the whole changeset.
+          # This function only calls lambda:PutFunctionConcurrency and
+          # never touches S3, so it needs neither reference.
+          UPLOAD_BUCKET: ""
+          PROTECTED_FUNCTION_NAME: !Sub "gatemaster-api-${Stage}"
       Policies:
         # Exactly one action on exactly one function. A broader policy
         # here would let an alarm disable anything in the account.
         - Statement:
             - Effect: Allow
               Action: lambda:PutFunctionConcurrency
-              Resource: !GetAtt ApiFunction.Arn
+              # Constructed rather than !GetAtt, for the same reason as
+              # PROTECTED_FUNCTION_NAME above. Still one function, not a
+              # wildcard across the account.
+              Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:gatemaster-api-${Stage}"
       Events:
         Alarm:
           Type: SNS
@@ -389,7 +484,11 @@ Resources:
       MetricName: Invocations
       Dimensions:
         - Name: FunctionName
-          Value: !Ref ApiFunction
+          # The name, not !Ref: an alarm that references ApiFunction
+          # joins the cycle described on PROTECTED_FUNCTION_NAME, because
+          # these alarms publish to the topic the kill switch subscribes
+          # to. The dimension only needs the function's name.
+          Value: !Sub "gatemaster-api-${Stage}"
       Statistic: Sum
       Period: 300
       EvaluationPeriods: 1
@@ -412,20 +511,34 @@ Resources:
     Properties:
       AlarmName: !Sub "gatemaster-${Stage}-monthly-usage-80pct"
       AlarmDescription: >
-        Invocations over the last 30 days passed 80% of
-        MonthlyRequestBudget.
+        Invocations over the last 7 days passed a week's share of
+        MonthlyRequestBudget, i.e. the account is on pace to exceed the
+        monthly budget.
       Namespace: AWS/Lambda
       MetricName: Invocations
       Dimensions:
         - Name: FunctionName
-          Value: !Ref ApiFunction
+          # The name, not !Ref: an alarm that references ApiFunction
+          # joins the cycle described on PROTECTED_FUNCTION_NAME, because
+          # these alarms publish to the topic the kill switch subscribes
+          # to. The dimension only needs the function's name.
+          Value: !Sub "gatemaster-api-${Stage}"
       Statistic: Sum
-      # 30 days in seconds. The longest period CloudWatch accepts is
-      # 86,400, so this is 30 one-day periods summed instead.
+      # Seven daily periods, not thirty. CloudWatch rejects an alarm
+      # whose EvaluationPeriods * Period exceeds 604,800 seconds when
+      # the period is an hour or more -- the stack rolled back on
+      # "Metrics cannot be checked across more than a week". A calendar
+      # month is simply not expressible as a metric alarm.
+      #
+      # So this measures pace instead of a total: a week's share of the
+      # monthly budget. Crossing it means the current rate would exceed
+      # the month, which is the thing worth knowing while there is still
+      # budget left to protect. The hard monthly ceiling stays where it
+      # belongs -- reserved concurrency and the kill switch.
       Period: 86400
-      EvaluationPeriods: 30
+      EvaluationPeriods: 7
       DatapointsToAlarm: 1
-      Threshold: !Ref MonthlyRequestBudget
+      Threshold: !Ref WeeklyRequestBudget
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
       AlarmActions: [!Ref AlertTopic]
@@ -445,7 +558,11 @@ Resources:
       MetricName: Throttles
       Dimensions:
         - Name: FunctionName
-          Value: !Ref ApiFunction
+          # The name, not !Ref: an alarm that references ApiFunction
+          # joins the cycle described on PROTECTED_FUNCTION_NAME, because
+          # these alarms publish to the topic the kill switch subscribes
+          # to. The dimension only needs the function's name.
+          Value: !Sub "gatemaster-api-${Stage}"
       Statistic: Sum
       Period: 300
       EvaluationPeriods: 1

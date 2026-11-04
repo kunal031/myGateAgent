@@ -84,8 +84,15 @@ export class ApiClient {
   constructor(options: ApiClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
     this.store = options.store ?? new MemoryTokenStore();
+    // .bind(globalThis), not a bare reference. The browser's fetch is a
+    // method of window and throws "Failed to execute 'fetch' on
+    // 'Window': Illegal invocation" the moment it is called detached --
+    // which is exactly what `this.fetchImpl(...)` does. The interceptor
+    // this class replaced bound it for the same reason; dropping the
+    // bind in the refactor broke every request from the browser.
     this.fetchImpl =
-      options.fetchImpl ?? (globalThis.fetch as unknown as FetchLike);
+      options.fetchImpl ??
+      (globalThis.fetch.bind(globalThis) as unknown as FetchLike);
     this.onSignedOut = options.onSignedOut;
 
     if (typeof this.fetchImpl !== "function") {
