@@ -51,10 +51,13 @@ class Settings(BaseSettings):
 
     # Browsers reject wildcard origins when credentials are allowed, so these
     # must be explicit.
-    CORS_ORIGINS: list[str] = [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ]
+    #: A comma-separated string, not a list[str]. pydantic-settings parses
+    #: a complex-typed field as JSON *before* any field_validator runs, so
+    #: declaring this list[str] made CORS_ORIGINS="http://localhost:3000"
+    #: fail at import with SettingsError -- the Lambda returned 500 on
+    #: every request, including /api/health. The split happens in
+    #: cors_origins below, where it is under our control.
+    CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     # ---- Cache ----
     #: Redis, used only for derived values that Postgres can recompute.
@@ -208,13 +211,14 @@ class Settings(BaseSettings):
     TRANSCRIPT_CACHE_DIR: Path = BASE_DIR / "data" / "transcripts"
     PAGE_IMAGE_DIR: Path = BASE_DIR / "data" / "page_images"
 
-    @field_validator("CORS_ORIGINS", mode="before")
-    @classmethod
-    def _split_origins(cls, value):
-        """Accept a comma-separated string from .env as well as a list."""
-        if isinstance(value, str):
-            return [origin.strip() for origin in value.split(",") if origin.strip()]
-        return value
+    @property
+    def cors_origins(self) -> list[str]:
+        """The allowed origins, split from the comma-separated setting.
+
+        A property rather than a validator: pydantic-settings would parse
+        a list-typed field as JSON before a validator could see it.
+        """
+        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
     @staticmethod
     def _normalise_dsn(dsn: str) -> str:

@@ -212,7 +212,14 @@ Resources:
   Api:
     Type: AWS::Serverless::HttpApi
     Properties:
-      StageName: !Ref Stage
+      # $default, not the stage name. A named stage serves under
+      # /{stage}, so /api/health became /dev/api/health -- every path the
+      # frontend and the Google redirect use would need the prefix, and
+      # they would differ between dev and prod. $default serves at the
+      # root, so a deployed URL has the same shape as localhost:8000.
+      # The stacks are already separated by name, so the stage adds
+      # nothing but a prefix to get wrong.
+      StageName: $default
       # First layer. Applies to every route on the stage, so a new route
       # is throttled the moment it exists rather than when someone
       # remembers to add it.
