@@ -80,6 +80,22 @@ Parameters:
       less than half the request allowance. 700,000 leaves headroom under
       both at 512 MB.
 
+  WeeklyRequestBudget:
+    Type: Number
+    Default: 160000
+    MinValue: 1000
+    Description: >
+      A week's share of MonthlyRequestBudget, used by the usage alarm.
+
+      Separate parameter rather than arithmetic on MonthlyRequestBudget,
+      because CloudFormation cannot divide. 160,000 is roughly
+      700,000 * 7/30, so crossing it in any rolling week means the
+      current pace would exceed the monthly budget.
+
+      CloudWatch cannot express a 30-day window at all: an alarm whose
+      EvaluationPeriods * Period exceeds 604,800 seconds is rejected
+      outright when the period is an hour or more.
+
   SustainedRateLimit:
     Type: Number
     Default: 20
@@ -451,8 +467,9 @@ Resources:
     Properties:
       AlarmName: !Sub "gatemaster-${Stage}-monthly-usage-80pct"
       AlarmDescription: >
-        Invocations over the last 30 days passed 80% of
-        MonthlyRequestBudget.
+        Invocations over the last 7 days passed a week's share of
+        MonthlyRequestBudget, i.e. the account is on pace to exceed the
+        monthly budget.
       Namespace: AWS/Lambda
       MetricName: Invocations
       Dimensions:
@@ -463,12 +480,21 @@ Resources:
           # to. The dimension only needs the function's name.
           Value: !Sub "gatemaster-api-${Stage}"
       Statistic: Sum
-      # 30 days in seconds. The longest period CloudWatch accepts is
-      # 86,400, so this is 30 one-day periods summed instead.
+      # Seven daily periods, not thirty. CloudWatch rejects an alarm
+      # whose EvaluationPeriods * Period exceeds 604,800 seconds when
+      # the period is an hour or more -- the stack rolled back on
+      # "Metrics cannot be checked across more than a week". A calendar
+      # month is simply not expressible as a metric alarm.
+      #
+      # So this measures pace instead of a total: a week's share of the
+      # monthly budget. Crossing it means the current rate would exceed
+      # the month, which is the thing worth knowing while there is still
+      # budget left to protect. The hard monthly ceiling stays where it
+      # belongs -- reserved concurrency and the kill switch.
       Period: 86400
-      EvaluationPeriods: 30
+      EvaluationPeriods: 7
       DatapointsToAlarm: 1
-      Threshold: !Ref MonthlyRequestBudget
+      Threshold: !Ref WeeklyRequestBudget
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
       AlarmActions: [!Ref AlertTopic]
