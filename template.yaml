@@ -115,14 +115,32 @@ Parameters:
 
   ApiReservedConcurrency:
     Type: Number
-    Default: 10
+    Default: 0
+    MinValue: 0
     Description: >
-      The actual ceiling, and the only one of these that is a hard limit.
-      Gateway throttling is best-effort by AWS's own documentation;
-      reserved concurrency is enforced by Lambda. 10 concurrent
-      executions at ~60ms each is about 166 rps of real capacity, well
-      above one user's need, and it caps how fast GB-seconds can possibly
-      be spent no matter what the gateway admits.
+      Reserved concurrency for the API. 0 means do not set it at all.
+
+      0 is the default because a new AWS account has a total concurrency
+      limit of 10, and AWS requires all 10 to stay unreserved -- so any
+      reservation is refused and the whole stack rolls back with
+      "decreases account's UnreservedConcurrentExecution below its
+      minimum value of [10]".
+
+      That is not a loss of protection: the account-wide limit is itself
+      a hard ceiling, enforced by AWS across every function, which is
+      stricter than reserving a slice for one. Once Service Quotas
+      raises "Concurrent executions" (ask for 1,000, the normal default),
+      set this to a real number and redeploy. A reservation then also
+      guarantees the API capacity the worker cannot take.
+
+  WorkerReservedConcurrency:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    Description: >
+      Reserved concurrency for the worker. 0 means none, like
+      ApiReservedConcurrency -- see the note there for why a new account
+      cannot reserve any.
 
   AlertEmail:
     Type: String
@@ -155,6 +173,14 @@ Conditions:
   # they are created but silent, which is worse than not created: it
   # looks like monitoring exists.
   HasAlertEmail: !Not [!Equals [!Ref AlertEmail, ""]]
+  #: 0 means "do not set the property at all". A brand-new AWS account
+  #: has a total concurrency limit of 10 and AWS requires all 10 stay
+  #: unreserved, so any reservation is rejected outright with
+  #: "decreases account's UnreservedConcurrentExecution below its
+  #: minimum value of [10]" -- and the whole stack rolls back. Once the
+  #: account limit is raised, set these parameters and redeploy.
+  ReserveApiConcurrency: !Not [!Equals [!Ref ApiReservedConcurrency, 0]]
+  ReserveWorkerConcurrency: !Not [!Equals [!Ref WorkerReservedConcurrency, 0]]
 
 Globals:
   Function:
@@ -227,7 +253,10 @@ Resources:
       # Gateway throttling is best-effort; this is not. It also caps the
       # rate at which GB-seconds can be consumed, which is the half of
       # the free tier that runs out first.
-      ReservedConcurrentExecutions: !Ref ApiReservedConcurrency
+      ReservedConcurrentExecutions: !If
+        - ReserveApiConcurrency
+        - !Ref ApiReservedConcurrency
+        - !Ref AWS::NoValue
       # 512 rather than the 1024 default. A cold start was measured at
       # ~0.9s of import, which at 1024 MB is 0.9 GB-s -- so a
       # cold-start-heavy flood would exhaust 400,000 GB-s at ~490,000
@@ -298,7 +327,10 @@ Resources:
       # the damage a runaway import loop could do to the GB-second
       # allowance: 2048 MB for 900s is 1,800 GB-s per invocation, and
       # 400,000 GB-s is only 222 of those.
-      ReservedConcurrentExecutions: 2
+      ReservedConcurrentExecutions: !If
+        - ReserveWorkerConcurrency
+        - !Ref WorkerReservedConcurrency
+        - !Ref AWS::NoValue
       # One retry, not the default two: these jobs call a rate-limited
       # API, and a third attempt during a 429 window spends quota to fail
       # again. Failures land on the paper or message row either way, so
