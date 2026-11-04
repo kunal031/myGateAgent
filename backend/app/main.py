@@ -9,8 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .api import (
-    agent, auth, assistant, exam, feed, papers, profile, quiz, stats,
-    syllabus,
+    admin, agent, auth, assistant, exam, feed, papers, profile, quiz,
+    stats, syllabus,
 )
 from .core import throttle
 from .core.cache import stats as cache_stats
@@ -78,6 +78,7 @@ app.include_router(exam.router)
 app.include_router(assistant.router)
 app.include_router(papers.router)
 app.include_router(profile.router)
+app.include_router(admin.router)
 
 
 @app.get("/api/health")
