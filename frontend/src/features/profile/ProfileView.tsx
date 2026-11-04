@@ -47,7 +47,12 @@ export default function ProfileView() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-2xl space-y-4">
+    /* space-y-5 and no max-width, matching feed, quiz, test and
+       analytics. max-w-2xl centred this inside a shell that already
+       pads, which left a wide band of empty space between the sidebar
+       and the content that no other page has -- the same problem
+       analytics already fixed. */
+    <div className="space-y-5">
       <header className="flex items-center gap-3">
         <button
           type="button"

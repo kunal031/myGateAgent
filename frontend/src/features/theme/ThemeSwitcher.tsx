@@ -16,7 +16,11 @@ export default function ThemeSwitcher({ compact = false }: { compact?: boolean }
 
   return (
     <div
-      className="inline-flex items-center gap-1 p-1 rounded-[var(--radius-pill)]"
+      // w-full + flex-1 children rather than inline-flex: in the 256px
+      // sidebar three labelled buttons ("Original", "Light", "Dark")
+      // overflowed the rail. Sharing the width equally keeps them inside
+      // it and keeps the three hit targets the same size.
+      className="flex w-full items-center gap-1 p-1 rounded-[var(--radius-pill)]"
       style={{
         background: "var(--surface-sunk)",
         border: "var(--line-width) solid var(--line)",
@@ -34,7 +38,11 @@ export default function ThemeSwitcher({ compact = false }: { compact?: boolean }
             onClick={() => setTheme(option)}
             aria-pressed={active}
             title={THEME_LABELS[option]}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-[var(--radius-pill)] text-xs font-semibold transition-colors"
+            className={
+              "flex items-center justify-center gap-1.5 rounded-[var(--radius-pill)] "
+              + "py-1.5 text-xs font-semibold transition-colors "
+              + (compact ? "px-2.5" : "min-w-0 flex-1 px-2")
+            }
             style={{
               background: active ? "var(--accent)" : "transparent",
               color: active ? "var(--accent-ink)" : "var(--ink-faint)",
@@ -44,7 +52,9 @@ export default function ThemeSwitcher({ compact = false }: { compact?: boolean }
             }}
           >
             <Icon className="w-3.5 h-3.5" />
-            {!compact && <span>{THEME_LABELS[option]}</span>}
+            {!compact && (
+              <span className="truncate">{THEME_LABELS[option]}</span>
+            )}
           </button>
         );
       })}

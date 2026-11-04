@@ -215,7 +215,12 @@ export function ManageTab({ profile, onSaved }: {
   };
 
   return (
-    <div className="space-y-5">
+    /* Two columns once there is room. Stacked full-width, each form's
+       inputs stretched the whole page and the second sat far below the
+       fold; side by side they stay a readable width and both are
+       visible at once. items-start so a taller column does not pad the
+       shorter one. */
+    <div className="grid items-start gap-5 lg:grid-cols-2">
       <form onSubmit={saveDetails} className="space-y-2">
         <h3 className="text-[10px] font-extrabold uppercase tracking-wider"
             style={{ color: "var(--ink-faint)" }}>Your details</h3>
@@ -267,9 +272,11 @@ export function ManageTab({ profile, onSaved }: {
         </button>
       </form>
 
-      <form onSubmit={savePassword} className="space-y-2"
-            style={{ borderTop: "var(--line-width) solid var(--line)",
-                     paddingTop: "1rem" }}>
+      {/* The divider only makes sense when the forms are stacked; in two
+          columns it would draw a line above the right-hand one alone. */}
+      <form onSubmit={savePassword}
+            className="space-y-2 border-t pt-4 lg:border-t-0 lg:pt-0"
+            style={{ borderColor: "var(--line)" }}>
         <h3 className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider"
             style={{ color: "var(--ink-faint)" }}>
           <KeyRound className="h-3 w-3" />
