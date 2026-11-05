@@ -5,9 +5,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { X, Zap } from "lucide-react";
 
+import { useAuth } from "../auth/AuthProvider";
 import ProfileMenu from "../profile/ProfileMenu";
 import ThemeSwitcher from "../theme/ThemeSwitcher";
-import { NAV_ITEMS, isActivePath } from "./nav-items";
+import { isActivePath, navItemsFor } from "./nav-items";
 
 interface SidebarProps {
   /** Drawer state, used on mobile only. */
@@ -17,6 +18,10 @@ interface SidebarProps {
 
 export default function Sidebar({ open = false, onClose }: SidebarProps) {
   const pathname = usePathname();
+  // The admin link is filtered out for a student. Hiding it is a UI
+  // nicety, not the guard: /admin and the API both check the role.
+  const { user } = useAuth();
+  const items = navItemsFor(user?.role);
 
   return (
     <>
@@ -77,7 +82,7 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
         </div>
 
         <nav className="flex-1 space-y-1.5 overflow-y-auto p-3">
-          {NAV_ITEMS.map((item) => {
+          {items.map((item) => {
             const Icon = item.icon;
             const active = isActivePath(pathname, item.href);
             return (

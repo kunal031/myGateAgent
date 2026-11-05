@@ -9,6 +9,7 @@ import {
   ProfileInfo, ProfileStats, changePassword, updateProfile,
 } from "@/lib/api";
 import { storeSession } from "@/lib/auth";
+import { Panel, Row } from "@/components/Panel";
 
 function Stat({ icon: Icon, label, value, hint }: {
   icon: typeof Target; label: string; value: string | number; hint?: string;
@@ -37,39 +38,6 @@ function Stat({ icon: Icon, label, value, hint }: {
   );
 }
 
-/** One titled panel. The info tab was five unlabelled bands of rows
- *  running down the page, so it was not obvious where account details
- *  ended and question stats began. A card per section makes the
- *  grouping visible without adding any words. */
-function Card({ title, span = false, children }: {
-  title: string; span?: boolean; children: React.ReactNode;
-}) {
-  return (
-    <section
-      className={`rounded-[var(--radius-lg)] p-3.5 ${span ? "lg:col-span-2" : ""}`}
-      style={{
-        background: "var(--surface)",
-        border: "var(--line-width) solid var(--line)",
-      }}
-    >
-      <h3 className="mb-2 text-[10px] font-extrabold uppercase tracking-wider"
-          style={{ color: "var(--ink-faint)" }}>{title}</h3>
-      {children}
-    </section>
-  );
-}
-
-
-function Row({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="flex items-baseline justify-between gap-3 py-1.5">
-      <span className="text-[12px]" style={{ color: "var(--ink-soft)" }}>{label}</span>
-      <span className="text-right text-[12px] font-bold" style={{ color: "var(--ink)" }}>
-        {value}
-      </span>
-    </div>
-  );
-}
 
 export function InfoTab({ profile, stats }: {
   profile: ProfileInfo | null; stats: ProfileStats | null;
@@ -92,7 +60,7 @@ export function InfoTab({ profile, stats }: {
        and question stats began. items-start so a short card does not
        stretch to match a tall neighbour. */
     <div className="grid items-start gap-3 lg:grid-cols-2">
-      <Card title="Account">
+      <Panel title="Account">
         <div style={{ borderTop: "var(--line-width) solid var(--line)" }}>
           <Row label="Name" value={profile.display_name || "—"} />
           <Row label="Email" value={profile.email} />
@@ -107,13 +75,13 @@ export function InfoTab({ profile, stats }: {
                  value={new Date(profile.created_at).toLocaleDateString()} />
           )}
         </div>
-      </Card>
+      </Panel>
 
       {stats && (
         <>
           {/* Four tiles side by side need the full width; in one column
               they would wrap to 2x2 and look like a different control. */}
-          <Card title="Progress" span>
+          <Panel title="Progress" span>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <Stat icon={Brain} label="Concepts" value={stats.concepts.learned}
                     hint={`${stats.concepts.touched} started`} />
@@ -125,9 +93,9 @@ export function InfoTab({ profile, stats }: {
                     hint={`${q?.correct ?? 0} right`} />
               <Stat icon={Flame} label="Active days" value={stats.active_days} />
             </div>
-          </Card>
+          </Panel>
 
-          <Card title="Questions">
+          <Panel title="Questions">
             <div style={{ borderTop: "var(--line-width) solid var(--line)" }}>
               <Row label="Right / wrong"
                    value={`${q?.correct ?? 0} / ${q?.wrong ?? 0}`} />
@@ -141,9 +109,9 @@ export function InfoTab({ profile, stats }: {
                      value={b.accuracy === null ? "—" : `${b.accuracy}%`} />
               ))}
             </div>
-          </Card>
+          </Panel>
 
-          <Card title="Quizzes & tests">
+          <Panel title="Quizzes & tests">
             <div style={{ borderTop: "var(--line-width) solid var(--line)" }}>
               <Row label="Quizzes submitted" value={quizzes?.submitted ?? 0} />
               {quizzes && (
@@ -155,15 +123,15 @@ export function InfoTab({ profile, stats }: {
               <Row label="Tests submitted" value={tests?.submitted ?? 0} />
               {tests && <Row label="Best test score" value={tests.best_score} />}
             </div>
-          </Card>
+          </Panel>
 
-          <Card title="Feed">
+          <Panel title="Feed">
             <div style={{ borderTop: "var(--line-width) solid var(--line)" }}>
               <Row label="Cards seen" value={stats.cards.seen} />
               <Row label="Total views" value={stats.cards.views} />
               <Row label="Cards mastered" value={stats.cards.mastered} />
             </div>
-          </Card>
+          </Panel>
         </>
       )}
     </div>
