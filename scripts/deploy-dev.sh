@@ -67,4 +67,4 @@ sam deploy \
     GoogleClientSecret="$GCSECRET" \
     FallbackApiKey="$FALLBACK" \
     GoogleRedirectUri="$REDIRECT" \
-    FrontendOrigin=http://localhost:3000
+    FrontendOrigin=https://mygateagent-frontend.vercel.app
