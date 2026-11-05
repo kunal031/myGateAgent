@@ -3,46 +3,9 @@
 import React, { useEffect, useState } from "react";
 import { Flame, Target, TrendingDown, TrendingUp } from "lucide-react";
 
+import { Panel, Row } from "@/components/Panel";
 import { DeepAnalytics, fetchDeepAnalytics } from "@/lib/api";
 
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section
-      className="rounded-[var(--radius)] p-3"
-      style={{
-        background: "var(--surface)",
-        border: "var(--line-width) solid var(--line)",
-      }}
-    >
-      <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-wider"
-          style={{ color: "var(--ink-faint)" }}>
-        {title}
-      </h3>
-      {children}
-    </section>
-  );
-}
-
-function Row({ label, value, hint }: {
-  label: string; value: string | number; hint?: string;
-}) {
-  return (
-    <div className="flex items-baseline justify-between gap-2 py-1">
-      <span className="min-w-0 truncate text-[12px]" style={{ color: "var(--ink-soft)" }}>
-        {label}
-      </span>
-      <span className="shrink-0 text-[13px] font-bold" style={{ color: "var(--ink)" }}>
-        {value}
-        {hint && (
-          <span className="ml-1 text-[10px] font-semibold"
-                style={{ color: "var(--ink-faint)" }}>
-            {hint}
-          </span>
-        )}
-      </span>
-    </div>
-  );
-}
 
 /** The analyses behind the insights, for when the summary is not enough. */
 export default function DeepPanels() {
@@ -62,7 +25,7 @@ export default function DeepPanels() {
 
   return (
     <div className="grid gap-3 sm:grid-cols-2">
-      <Card title="Projected score">
+      <Panel size="sm" title="Projected score">
         <p className="text-2xl font-extrabold" style={{ color: "var(--ink)" }}>
           {readiness.projected_marks}
           <span className="ml-1 text-[12px] font-semibold"
@@ -78,9 +41,9 @@ export default function DeepPanels() {
             && ` · ${readiness.unassessed_weight} still untested`}
           {" · "}confidence {readiness.confidence}
         </p>
-      </Card>
+      </Panel>
 
-      <Card title="Direction">
+      <Panel size="sm" title="Direction">
         <div className="flex items-center gap-2">
           <TrendIcon className="h-5 w-5" style={{ color: "var(--ink)" }} />
           <p className="text-2xl font-extrabold" style={{ color: "var(--ink)" }}>
@@ -93,10 +56,10 @@ export default function DeepPanels() {
           {trend.change !== null
             && ` · ${trend.change > 0 ? "+" : ""}${trend.change} points vs before`}
         </p>
-      </Card>
+      </Panel>
 
       {pace.samples > 0 && (
-        <Card title="Pace">
+        <Panel size="sm" title="Pace">
           <Row label="Time on questions"
                value={`${pace.total_minutes ?? 0} min`} />
           <Row label="Over time budget"
@@ -104,11 +67,11 @@ export default function DeepPanels() {
                hint={`${pace.over_budget_pct ?? 0}%`} />
           <Row label="Slow and still wrong" value={pace.slow_and_wrong ?? 0} />
           <Row label="Rushed errors" value={pace.rushed_errors ?? 0} />
-        </Card>
+        </Panel>
       )}
 
       {by_question_type.length > 0 && (
-        <Card title="By question type">
+        <Panel size="sm" title="By question type">
           {by_question_type.map((row) => (
             <Row
               key={row.question_type}
@@ -117,11 +80,11 @@ export default function DeepPanels() {
               hint={`${row.avg_seconds}s avg`}
             />
           ))}
-        </Card>
+        </Panel>
       )}
 
       {weak_topics.length > 0 && (
-        <Card title="Worth the most marks">
+        <Panel size="sm" title="Worth the most marks">
           {weak_topics.slice(0, 5).map((row) => (
             <Row
               key={row.topic_slug}
@@ -130,20 +93,20 @@ export default function DeepPanels() {
               hint={`${row.accuracy}%`}
             />
           ))}
-        </Card>
+        </Panel>
       )}
 
       {retention.cards_seen > 0 && (
-        <Card title="Retention">
+        <Panel size="sm" title="Retention">
           <Row label="Cards recalled" value={retention.cards_recalled} />
           <Row label="Mastered" value={retention.cards_mastered} />
           <Row label="Lapse rate" value={`${retention.lapse_rate}%`} />
           <Row label="Due now" value={retention.due_now} />
-        </Card>
+        </Panel>
       )}
 
       {exam_behaviour.sessions > 0 && (
-        <Card title="In timed papers">
+        <Panel size="sm" title="In timed papers">
           <Row label="Papers submitted" value={exam_behaviour.sessions} />
           <Row label="Left unanswered"
                value={exam_behaviour.unattempted ?? 0}
@@ -151,11 +114,11 @@ export default function DeepPanels() {
           <Row label="Best score" value={exam_behaviour.best_score ?? 0} />
           <Row label="Average accuracy"
                value={`${exam_behaviour.avg_accuracy ?? 0}%`} />
-        </Card>
+        </Panel>
       )}
 
       {distractors.length > 0 && (
-        <Card title="Repeated mistakes">
+        <Panel size="sm" title="Repeated mistakes">
           {distractors.slice(0, 4).map((row) => (
             <div key={row.question_id} className="py-1.5">
               <p className="truncate text-[12px]" style={{ color: "var(--ink-soft)" }}>
@@ -169,7 +132,7 @@ export default function DeepPanels() {
               </p>
             </div>
           ))}
-        </Card>
+        </Panel>
       )}
     </div>
   );
