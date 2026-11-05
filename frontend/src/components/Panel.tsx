@@ -66,26 +66,42 @@ export function Row({
   label,
   value,
   hint,
+  hintOn = "label",
 }: {
   label: string;
   value: React.ReactNode;
   hint?: string;
+  /** Which side the hint annotates. The two pages that predate this
+   *  component disagreed: the profile page qualifies the label ("/ 100"),
+   *  the analytics page qualifies the number ("1.4s avg"). Putting a
+   *  hint on the wrong side changes what it claims, so it is explicit
+   *  rather than chosen here. */
+  hintOn?: "label" | "value";
 }) {
+  const note = hint ? (
+    <span
+      className="ml-1 text-[10px] font-semibold"
+      style={{ color: "var(--ink-faint)" }}
+    >
+      {hint}
+    </span>
+  ) : null;
+
   return (
     <div className="flex items-baseline justify-between gap-3 py-1.5">
-      <span className="min-w-0 text-[12px]" style={{ color: "var(--ink-soft)" }}>
+      <span
+        className="min-w-0 truncate text-[12px]"
+        style={{ color: "var(--ink-soft)" }}
+      >
         {label}
-        {hint && (
-          <span className="ml-1 text-[10px]" style={{ color: "var(--ink-faint)" }}>
-            {hint}
-          </span>
-        )}
+        {hintOn === "label" && note}
       </span>
       <span
         className="shrink-0 text-right text-[12px] font-bold"
         style={{ color: "var(--ink)" }}
       >
         {value}
+        {hintOn === "value" && note}
       </span>
     </div>
   );

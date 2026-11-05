@@ -64,7 +64,7 @@ export default function DeepPanels() {
                value={`${pace.total_minutes ?? 0} min`} />
           <Row label="Over time budget"
                value={`${pace.over_budget ?? 0}`}
-               hint={`${pace.over_budget_pct ?? 0}%`} />
+               hintOn="value" hint={`${pace.over_budget_pct ?? 0}%`} />
           <Row label="Slow and still wrong" value={pace.slow_and_wrong ?? 0} />
           <Row label="Rushed errors" value={pace.rushed_errors ?? 0} />
         </Panel>
@@ -77,7 +77,7 @@ export default function DeepPanels() {
               key={row.question_type}
               label={`${row.question_type} · ${row.attempts} attempted`}
               value={`${row.accuracy}%`}
-              hint={`${row.avg_seconds}s avg`}
+              hintOn="value" hint={`${row.avg_seconds}s avg`}
             />
           ))}
         </Panel>
@@ -90,7 +90,7 @@ export default function DeepPanels() {
               key={row.topic_slug}
               label={row.topic_name}
               value={`${row.marks_at_stake}M`}
-              hint={`${row.accuracy}%`}
+              hintOn="value" hint={`${row.accuracy}%`}
             />
           ))}
         </Panel>
@@ -110,7 +110,7 @@ export default function DeepPanels() {
           <Row label="Papers submitted" value={exam_behaviour.sessions} />
           <Row label="Left unanswered"
                value={exam_behaviour.unattempted ?? 0}
-               hint={`${exam_behaviour.unattempted_pct ?? 0}%`} />
+               hintOn="value" hint={`${exam_behaviour.unattempted_pct ?? 0}%`} />
           <Row label="Best score" value={exam_behaviour.best_score ?? 0} />
           <Row label="Average accuracy"
                value={`${exam_behaviour.avg_accuracy ?? 0}%`} />

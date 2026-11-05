@@ -202,6 +202,7 @@ export default function UserDetail({
               <Row
                 label="Projected marks"
                 value={detail.readiness.projected_marks}
+                hintOn="value"
                 hint="/ 100"
               />
               <Row
@@ -270,6 +271,7 @@ export default function UserDetail({
               <Row
                 label="Lapse rate"
                 value={`${detail.retention.lapse_rate}%`}
+                hintOn="value"
                 hint={`${detail.retention.total_lapses} lapses`}
               />
             </Panel>
