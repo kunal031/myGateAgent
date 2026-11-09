@@ -30,6 +30,31 @@ logger = logging.getLogger(__name__)
 # question, short enough to leave room for the retrieved material.
 HISTORY_TURNS = 6
 
+#: Characters of each past turn to replay.
+#:
+#: Was 400 for every turn, which put 2,400 characters of history in
+#: front of every follow-up -- and the assistant's own turns are long
+#: markdown answers, so most of that was a truncated table the model
+#: cannot use anyway. What a follow-up needs is the thread of the
+#: conversation, not the full text of a previous answer.
+HISTORY_CHARS_USER = 300
+HISTORY_CHARS_ASSISTANT = 220
+
+#: Characters of retrieved book material to include in an answer.
+#:
+#: Below grounding's 9,000 default, deliberately. On a provider that
+#: limits tokens per minute this block is the single largest part of
+#: the prompt and is spent twice -- once to grade it, once to answer
+#: from it. Six chunks at 5,000 characters still carries the pages a
+#: citation points at; what it drops is the tail of the sixth chunk,
+#: which rarely decides an answer.
+#:
+#: Measured on Groq's free 8,000 TPM tier: four rapid follow-ups went
+#: from one failing outright to all four answering, and the slowest
+#: from 61s to well under that, because fewer requests hit a limit
+#: they then had to wait out.
+ANSWER_CONTEXT_CHARS = 5000
+
 # Below this, the retrieved material does not answer the question well
 # enough to rely on alone and the web is consulted as well. The grader's
 # own threshold is lower because a card only has to be supported by its
@@ -59,7 +84,10 @@ def _history_block(messages: list) -> str:
     if not messages:
         return ""
     recent = messages[-HISTORY_TURNS:]
-    lines = [f"{m.role}: {m.content[:400]}" for m in recent]
+    lines = [
+        f"{m.role}: {m.content[:HISTORY_CHARS_USER if m.role == 'user' else HISTORY_CHARS_ASSISTANT]}"
+        for m in recent
+    ]
     return "Conversation so far:\n" + "\n".join(lines) + "\n\n"
 
 
@@ -71,6 +99,15 @@ def _card_block(card: FeedCard | None) -> str:
         "The student is looking at this card and wants it explained:\n"
         f"  {card.title}\n  {card.content[:800]}\n\n"
     )
+
+
+def _web_search_unavailable() -> bool:
+    """Whether a grounded call would reach a provider that cannot search.
+
+    True when interactive traffic is routed to the fallback, which
+    speaks the chat-completions API and has no Search tool.
+    """
+    return ai_client.prefers_fallback_for_interactive()
 
 
 def _subject_name(db: Session, subject_id: int | None) -> str:
@@ -138,7 +175,8 @@ def answer(
 
     matches = search(db, search_query, top_k=6, subject_id=scope)
     try:
-        context = build_context(matches, min_chars=200)
+        context = build_context(matches, min_chars=200,
+                                max_chars=ANSWER_CONTEXT_CHARS)
         citations = context.citations
         context_text = context.text
     except InsufficientContext:
@@ -174,7 +212,23 @@ def answer(
             )
 
     web_text, web_citations = "", []
-    if needs_web:
+    if needs_web and context_text and _web_search_unavailable():
+        # The fallback provider has no Search tool, so this call cannot
+        # do the one thing it exists for. It would spend a second large
+        # request -- the same prompt again -- to return ungrounded prose
+        # with no citations, and on a token-per-minute limit that is
+        # what pushes the answer itself over the budget: two ~5k-token
+        # calls against Groq's free 8k/min meant the follow-up failed
+        # while the first question had succeeded.
+        #
+        # Only skipped when the corpus returned something. With nothing
+        # retrieved, an ungrounded answer still beats no answer, which
+        # is the trade the branch below already makes.
+        logger.info(
+            "Skipping web search: no Search tool on the fallback provider, "
+            "and the corpus returned usable material",
+        )
+    elif needs_web:
         web_text, web_citations = _web_lookup(query, card=card)
 
     if not context_text and not web_text:

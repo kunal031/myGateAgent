@@ -165,16 +165,26 @@ _retry = retry(
 INTERACTIVE_TIMEOUT_SECONDS = 45.0
 
 
-def _prefer_fallback() -> bool:
+def prefers_fallback_for_interactive() -> bool:
     """Whether the interactive path should skip Gemini entirely.
 
     Both halves are required: asking to prefer the fallback while none is
     configured would disable the assistant rather than reroute it, so an
     unset key falls back to the normal Gemini-first path.
+
+    Public because callers need it to decide more than routing. The
+    fallback has no Search tool, so a grounded call in this mode cannot
+    search the web -- and knowing that in advance is what lets the
+    assistant skip a request that would spend budget to return nothing
+    useful.
     """
     return bool(
         settings.PREFER_FALLBACK_FOR_INTERACTIVE and fallback.configured()
     )
+
+
+#: Kept as the internal name used throughout this module.
+_prefer_fallback = prefers_fallback_for_interactive
 
 
 @_retry

@@ -47,11 +47,20 @@ class GroundedContext:
         return self.provenance, ",".join(str(c) for c in self.chunk_ids)
 
 
-def build_context(matches: list[Match], *, min_chars: int = 400) -> GroundedContext:
+def build_context(
+    matches: list[Match], *, min_chars: int = 400,
+    max_chars: int = MAX_CONTEXT_CHARS,
+) -> GroundedContext:
     """Assemble retrieved chunks into a prompt context block.
 
     Raises InsufficientContext when there is too little to write from, so a
     thin topic produces no cards rather than invented ones.
+
+    `max_chars` exists because the right budget depends on who is
+    waiting. Card generation is a batch job and can afford the full
+    9,000 characters; the assistant is answering someone now, against a
+    provider that limits tokens per minute, and every character here is
+    spent twice -- once grading the context and once answering from it.
     """
     if not matches:
         raise InsufficientContext("No source material retrieved")
@@ -61,7 +70,7 @@ def build_context(matches: list[Match], *, min_chars: int = 400) -> GroundedCont
         body = match.content.strip()
         if not body:
             continue
-        if used + len(body) > MAX_CONTEXT_CHARS:
+        if used + len(body) > max_chars:
             break
         parts.append(f"[Source {len(parts) + 1} — {match.citation}]\n{body}")
         chunk_ids.append(match.chunk_id)
