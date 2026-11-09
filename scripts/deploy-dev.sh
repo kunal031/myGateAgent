@@ -6,10 +6,10 @@
 # because this script is the review step; run `sam deploy` without it if
 # you want to inspect the changeset first.
 #
-# A fresh JwtSecret is generated per run. That signs out any existing dev
-# session, which is correct for a dev stage and must NOT be copied to
-# prod: sharing a secret between stages means a token minted in dev is
-# valid in production.
+# JwtSecret is read back from the running function and only generated on
+# a first deploy, so redeploying does not sign you out. Each stage must
+# still have its own: sharing a secret between stages means a token
+# minted in dev is valid in production.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -23,6 +23,29 @@ GCID=$(read_env GOOGLE_CLIENT_ID)
 GCSECRET=$(read_env GOOGLE_CLIENT_SECRET)
 FALLBACK=$(read_env FALLBACK_API_KEY)
 
+# Read from .env like the rest, but default to true rather than empty:
+# an unset value here would send the assistant back to trying Gemini
+# first, which is the path that hangs once its quota is spent.
+PREFER_FALLBACK=$(read_env PREFER_FALLBACK_FOR_INTERACTIVE)
+[ -z "$PREFER_FALLBACK" ] && PREFER_FALLBACK=true
+
+# CloudFormation rejects anything outside the AllowedValues, and it does
+# so after the upload rather than before, so a stray "TRUE" from .env
+# costs a full round trip to find out.
+case "$PREFER_FALLBACK" in
+  true|false) ;;
+  True|TRUE|1|yes)  PREFER_FALLBACK=true ;;
+  False|FALSE|0|no) PREFER_FALLBACK=false ;;
+  *) echo "PREFER_FALLBACK_FOR_INTERACTIVE must be true or false, got '$PREFER_FALLBACK'" >&2
+     exit 1 ;;
+esac
+
+if [ -z "$FALLBACK" ] && [ "$PREFER_FALLBACK" = true ]; then
+  echo "PREFER_FALLBACK_FOR_INTERACTIVE is true but FALLBACK_API_KEY is empty," >&2
+  echo "which would route the assistant to a provider that is not configured." >&2
+  exit 1
+fi
+
 if [ -z "$NEON" ]; then
   echo "NEON_DATABASE_URL is empty in $ENV_FILE" >&2
   exit 1
@@ -35,7 +58,27 @@ case "$NEON" in
      exit 1 ;;
 esac
 
-JWT=$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')
+# Reuse the secret the stack is already running with, and generate one
+# only on the first deploy.
+#
+# This used to mint a fresh secret every run. That was defensible when
+# the script was for standing a dev stage up, but it signs every session
+# out on each redeploy -- including the Google sign-in you are about to
+# test -- which turns an ordinary config change into "I have to log in
+# again, did I break auth?". Rotating is still one command when it is
+# actually wanted:
+#
+#   sam deploy ... --parameter-overrides JwtSecret=$(python3 -c \
+#     'import secrets; print(secrets.token_urlsafe(48))')
+JWT=$(aws lambda get-function-configuration \
+  --function-name gatemaster-api-dev --region ap-southeast-1 \
+  --query "Environment.Variables.JWT_SECRET" --output text 2>/dev/null || true)
+if [ -z "$JWT" ] || [ "$JWT" = "None" ]; then
+  JWT=$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')
+  echo "jwt secret: generated (first deploy)"
+else
+  echo "jwt secret: reusing the deployed one, so sessions survive"
+fi
 
 # The redirect URI contains the API's own id, which does not exist until
 # the stack does. Read it back from the previous deploy when there is
@@ -49,6 +92,18 @@ if [ -n "$REDIRECT" ]; then
 else
   echo "google redirect: not yet known (first deploy); re-run after this one"
 fi
+
+# Stage and build before deploying, because `sam deploy` on its own
+# uploads whatever is in .aws-sam/build from the last run. Deploying a
+# code change without these two steps ships the previous code with the
+# new parameters, which looks like a deploy that silently did nothing --
+# the config changes, the behaviour does not.
+# build-lambda.sh stages one source tree per function and ends with
+# `sam build --use-container`, which is the part that must not be
+# skipped: a plain `sam build` on this Mac picks macOS arm64 wheels,
+# which import fine here and fail on Lambda.
+echo "staging and building..."
+scripts/build-lambda.sh
 
 sam deploy \
   --stack-name gateai-dev \
@@ -66,5 +121,6 @@ sam deploy \
     GoogleClientId="$GCID" \
     GoogleClientSecret="$GCSECRET" \
     FallbackApiKey="$FALLBACK" \
+    PreferFallbackForInteractive="$PREFER_FALLBACK" \
     GoogleRedirectUri="$REDIRECT" \
     FrontendOrigin=https://gateai-one.vercel.app

@@ -156,6 +156,26 @@ _retry = retry(
     reraise=True,
 )
 
+#: The ceiling for a call a student is waiting on, in seconds.
+#:
+#: Far below GEMINI_REQUEST_TIMEOUT_MS, which is sized for a vision page
+#: or a long batch generation and is the wrong budget for an answer
+#: someone is watching a spinner for. At 180s the retry stack could spend
+#: minutes on one question and still return nothing.
+INTERACTIVE_TIMEOUT_SECONDS = 45.0
+
+
+def _prefer_fallback() -> bool:
+    """Whether the interactive path should skip Gemini entirely.
+
+    Both halves are required: asking to prefer the fallback while none is
+    configured would disable the assistant rather than reroute it, so an
+    unset key falls back to the normal Gemini-first path.
+    """
+    return bool(
+        settings.PREFER_FALLBACK_FOR_INTERACTIVE and fallback.configured()
+    )
+
 
 @_retry
 def generate_text(
@@ -173,6 +193,19 @@ def generate_text(
     `interactive=True` draws on a separate budget, so a request someone is
     waiting on does not queue behind a batch run holding the shared bucket.
     """
+    if interactive and _prefer_fallback():
+        # No Gemini attempt at all. Its quota is spent, so trying first
+        # buys nothing and costs the student the full request timeout
+        # before the 429 arrives.
+        return fallback.generate_text(
+            prompt,
+            system_instruction=system_instruction,
+            response_mime_type=response_mime_type,
+            response_schema=response_schema,
+            temperature=temperature,
+            timeout=INTERACTIVE_TIMEOUT_SECONDS,
+        )
+
     limiter = interactive_limiter if interactive else generation_limiter
     limiter.acquire()
 
@@ -186,6 +219,7 @@ def generate_text(
         response = _with_deadline(
             get_client().models.generate_content,
             model=model, contents=prompt, config=config,
+            deadline=INTERACTIVE_TIMEOUT_SECONDS if interactive else None,
         )
         return (response.text or "").strip()
     except Exception as exc:
@@ -204,11 +238,11 @@ def generate_text(
             response_mime_type=response_mime_type,
             response_schema=response_schema,
             temperature=temperature,
+            timeout=INTERACTIVE_TIMEOUT_SECONDS if interactive else None,
         )
 
 
-@_retry
-def _with_deadline(fn, *args, **kwargs):
+def _with_deadline(fn, *args, deadline: float | None = None, **kwargs):
     """Run `fn` on a throwaway thread and give up after the ceiling.
 
     Belt and braces over the httpx timeout. A wedged SSL read has twice
@@ -217,6 +251,17 @@ def _with_deadline(fn, *args, **kwargs):
     regardless of what the transport does. The abandoned thread is a daemon
     and dies with the process; leaking one is far cheaper than losing a
     multi-hour run to a single stuck page.
+
+    Deliberately **not** decorated with @_retry, though it was once.
+
+    Every caller is already wrapped in it, and retries nest
+    multiplicatively rather than adding: four attempts here inside four
+    attempts there is sixteen requests, and at a 180-second ceiling with
+    backoff the worst case was ~3,020s. The worker Lambda is killed at
+    900s, which happens *before* the `except` that marks the row failed --
+    so the assistant message stayed "pending" forever and the student
+    waited on an answer that could never arrive. One retry layer, at the
+    caller.
     """
     import threading
 
@@ -232,17 +277,20 @@ def _with_deadline(fn, *args, **kwargs):
         except BaseException as exc:  # noqa: BLE001 - re-raised on the caller
             box["error"] = exc
 
+    ceiling = (
+        deadline if deadline is not None
+        else settings.GEMINI_REQUEST_TIMEOUT_MS / 1000
+    )
+
     worker = threading.Thread(target=run, daemon=True)
     worker.start()
-    worker.join(timeout=settings.GEMINI_REQUEST_TIMEOUT_MS / 1000)
+    worker.join(timeout=ceiling)
 
     if worker.is_alive():
         # Abandoned, not killed: Python cannot interrupt a thread blocked in
         # a socket read. It dies with the process, and one leaked thread is
         # far cheaper than losing a multi-hour run to a single stuck page.
-        raise TimeoutError(
-            f"Gemini call exceeded {settings.GEMINI_REQUEST_TIMEOUT_MS}ms"
-        )
+        raise TimeoutError(f"Gemini call exceeded {ceiling:.0f}s")
     if "error" in box:
         raise box["error"]
     return box["value"]
@@ -285,6 +333,24 @@ def generate_grounded(
     Returns the text plus the cited sources, so web-derived content can
     always be traced back to a URL.
     """
+    if interactive and _prefer_fallback():
+        # Same reasoning as generate_text, with one extra consequence: the
+        # fallback has no Search tool, so this returns no web citations.
+        # The caller (assistant._web_lookup) treats an empty citation list
+        # as "the web added nothing" and still answers from the corpus,
+        # which is the grounded half that actually carries the books.
+        logger.info(
+            "Interactive grounded call routed to %s; no web citations",
+            settings.FALLBACK_MODEL,
+        )
+        return {
+            "text": fallback.generate_text(
+                prompt, temperature=temperature,
+                timeout=INTERACTIVE_TIMEOUT_SECONDS,
+            ).strip(),
+            "citations": [],
+        }
+
     # Grounded calls have their own daily budget, but a request someone is
     # waiting on must not queue behind a batch of them either.
     (interactive_limiter if interactive else search_limiter).acquire()
@@ -298,6 +364,7 @@ def generate_grounded(
                 temperature=temperature,
                 tools=[types.Tool(google_search=types.GoogleSearch())],
             ),
+            deadline=INTERACTIVE_TIMEOUT_SECONDS if interactive else None,
         )
     except Exception as exc:
         # generate_text has fallen back to the second provider on a quota

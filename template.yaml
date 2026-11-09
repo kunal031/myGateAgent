@@ -53,6 +53,18 @@ Parameters:
   FallbackModel:
     Type: String
     Default: openai/gpt-oss-120b
+  PreferFallbackForInteractive:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: >
+      Send the assistant, intent parsing and context grading straight to
+      the fallback provider instead of trying Gemini first. Set true when
+      Gemini's generation quota is exhausted early in the day: trying it
+      first then costs a guaranteed timeout before the 429, which the
+      student sees as a question that never gets answered. GeminiApiKey
+      is still required either way -- Groq serves no embedding model, and
+      embeddings are what make the corpus searchable.
 
   GoogleClientId:
     Type: String
@@ -196,6 +208,7 @@ Globals:
         FALLBACK_API_KEY: !Ref FallbackApiKey
         FALLBACK_BASE_URL: !Ref FallbackBaseUrl
         FALLBACK_MODEL: !Ref FallbackModel
+        PREFER_FALLBACK_FOR_INTERACTIVE: !Ref PreferFallbackForInteractive
         GOOGLE_CLIENT_ID: !Ref GoogleClientId
         GOOGLE_CLIENT_SECRET: !Ref GoogleClientSecret
         CORS_ORIGINS: !Ref FrontendOrigin

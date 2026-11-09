@@ -91,7 +91,12 @@ def _web_lookup(query: str, *, card: FeedCard | None = None) -> tuple[str, list[
         result = ai_client.generate_grounded(
             f"{focus}\n\nAnswer for a GATE CSE exam candidate. Be precise, "
             f"use the standard notation, and include a worked example where "
-            f"one helps."
+            f"one helps.",
+            # A student is waiting on this. Without the flag it drew on the
+            # batch search budget -- so an answer could queue behind a
+            # generate_all run -- and took the 180s batch ceiling rather
+            # than the interactive one.
+            interactive=True,
         )
     except Exception as exc:
         logger.warning("Web search failed (%s); answering from corpus", exc)
