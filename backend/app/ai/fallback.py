@@ -26,6 +26,8 @@ is why `fallback_used` is returned and surfaced rather than hidden.
 
 import json
 import logging
+import re
+import time
 from typing import Any
 
 import httpx
@@ -44,8 +46,62 @@ class FallbackNotConfigured(RuntimeError):
     """No fallback key is set, so there is nothing to fall back to."""
 
 
+class FallbackRateLimited(RuntimeError):
+    """The provider refused for rate reasons and said to come back.
+
+    Distinct from the generic error because it means something different:
+    the request was well formed and would succeed shortly. Groq's free
+    tier caps tokens per minute, not just requests, so one ordinary
+    follow-up -- history plus retrieved book excerpts -- can exceed it
+    on its own.
+
+    `retry_after` is the provider's own figure in seconds, parsed from
+    the Retry-After header or the message body. Honouring it is the
+    difference between waiting the ~0.3s it actually asked for and
+    failing the answer outright.
+    """
+
+    def __init__(self, message: str, retry_after: float | None = None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
 def configured() -> bool:
     return bool(settings.FALLBACK_API_KEY.strip())
+
+
+#: Ceiling on how long a 429 may ask us to wait. Past this, waiting is
+#: worse than failing: the student is watching a spinner, and a minute
+#: of silence is indistinguishable from the hang this all replaced.
+MAX_RETRY_AFTER_SECONDS = 25.0
+
+
+def _retry_after_seconds(response: "httpx.Response") -> float | None:
+    """How long the provider asked us to wait, in seconds.
+
+    Prefers the Retry-After header; falls back to the figure embedded in
+    the message body, which is where Groq actually puts it ("Please try
+    again in 307.5ms" / "in 18.97s"). Returns None when neither is
+    present or the value is beyond what is worth waiting for, so the
+    caller gives up rather than inventing a delay.
+    """
+    header = response.headers.get("retry-after", "").strip()
+    if header:
+        try:
+            value = float(header)
+            return value if 0 <= value <= MAX_RETRY_AFTER_SECONDS else None
+        except ValueError:
+            pass  # may be an HTTP-date; the body is more useful anyway
+
+    match = re.search(
+        r"try again in\s+([\d.]+)\s*(ms|s)\b", response.text, re.IGNORECASE,
+    )
+    if match:
+        value = float(match.group(1))
+        if match.group(2).lower() == "ms":
+            value /= 1000.0
+        return value if value <= MAX_RETRY_AFTER_SECONDS else None
+    return None
 
 
 def _supports_schema(model: str) -> bool:
@@ -146,6 +202,13 @@ def _genai_to_json_schema(node: Any) -> Any:
     return out
 
 
+#: How many times to re-send after a 429. Small on purpose: the waits
+#: come from the provider and are usually well under a second, so this
+#: is for riding out a token-bucket refill, not for queueing behind a
+#: genuinely exhausted quota.
+RATE_LIMIT_ATTEMPTS = 3
+
+
 def generate_text(
     prompt: str,
     *,
@@ -156,7 +219,57 @@ def generate_text(
     model: str | None = None,
     timeout: float | None = None,
 ) -> str:
-    """Generate with the fallback provider. Mirrors ai.client.generate_text."""
+    """Generate with the fallback provider, waiting out a rate limit.
+
+    Groq's free tier limits *tokens* per minute, not just requests, and
+    one ordinary follow-up -- conversation history plus retrieved book
+    excerpts -- can exceed it by itself. The refusal says how long to
+    wait and it is usually a fraction of a second, so failing the whole
+    answer over it wastes work that was about to succeed.
+
+    Only a 429 is retried, and only for as long as the provider asks.
+    Anything else propagates: a malformed request fails the same way on
+    the next attempt.
+    """
+    last: FallbackRateLimited | None = None
+    for attempt in range(RATE_LIMIT_ATTEMPTS):
+        try:
+            return _generate_once(
+                prompt,
+                system_instruction=system_instruction,
+                response_mime_type=response_mime_type,
+                response_schema=response_schema,
+                temperature=temperature,
+                model=model,
+                timeout=timeout,
+            )
+        except FallbackRateLimited as exc:
+            last = exc
+            if exc.retry_after is None or attempt == RATE_LIMIT_ATTEMPTS - 1:
+                raise
+            # A small margin on top, because the bucket refills on the
+            # provider's clock and landing exactly on the boundary just
+            # earns another 429.
+            delay = exc.retry_after + 0.25
+            logger.info(
+                "Fallback rate limited; waiting %.2fs (attempt %d/%d)",
+                delay, attempt + 1, RATE_LIMIT_ATTEMPTS,
+            )
+            time.sleep(delay)
+    raise last  # unreachable; the loop either returns or raises
+
+
+def _generate_once(
+    prompt: str,
+    *,
+    system_instruction: str | None = None,
+    response_mime_type: str | None = None,
+    response_schema: Any = None,
+    temperature: float = 0.2,
+    model: str | None = None,
+    timeout: float | None = None,
+) -> str:
+    """One request to the provider. Raises FallbackRateLimited on a 429."""
     if not configured():
         raise FallbackNotConfigured(
             "No FALLBACK_API_KEY is set, so there is no second model to use "
@@ -207,6 +320,17 @@ def generate_text(
         )
     except httpx.HTTPError as exc:
         raise RuntimeError(f"Fallback provider unreachable: {exc}") from exc
+
+    if response.status_code == 429:
+        # Rate limited, not broken. Logged in full because the body
+        # names which limit was hit -- on Groq's free tier it is tokens
+        # per minute, which a single follow-up can exceed on its own.
+        logger.warning("Fallback provider rate limited: %s",
+                       response.text[:300])
+        raise FallbackRateLimited(
+            "Fallback provider is rate limited",
+            retry_after=_retry_after_seconds(response),
+        )
 
     if response.status_code != 200:
         # Logged in full, raised in brief: the body names the cause and
