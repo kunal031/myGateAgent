@@ -207,8 +207,7 @@ def generate_text(
         )
 
 
-@_retry
-def _with_deadline(fn, *args, **kwargs):
+def _with_deadline(fn, *args, deadline: float | None = None, **kwargs):
     """Run `fn` on a throwaway thread and give up after the ceiling.
 
     Belt and braces over the httpx timeout. A wedged SSL read has twice
@@ -217,6 +216,17 @@ def _with_deadline(fn, *args, **kwargs):
     regardless of what the transport does. The abandoned thread is a daemon
     and dies with the process; leaking one is far cheaper than losing a
     multi-hour run to a single stuck page.
+
+    Deliberately **not** decorated with @_retry, though it was once.
+
+    Every caller is already wrapped in it, and retries nest
+    multiplicatively rather than adding: four attempts here inside four
+    attempts there is sixteen requests, and at a 180-second ceiling with
+    backoff the worst case was ~3,020s. The worker Lambda is killed at
+    900s, which happens *before* the `except` that marks the row failed --
+    so the assistant message stayed "pending" forever and the student
+    waited on an answer that could never arrive. One retry layer, at the
+    caller.
     """
     import threading
 
@@ -232,17 +242,20 @@ def _with_deadline(fn, *args, **kwargs):
         except BaseException as exc:  # noqa: BLE001 - re-raised on the caller
             box["error"] = exc
 
+    ceiling = (
+        deadline if deadline is not None
+        else settings.GEMINI_REQUEST_TIMEOUT_MS / 1000
+    )
+
     worker = threading.Thread(target=run, daemon=True)
     worker.start()
-    worker.join(timeout=settings.GEMINI_REQUEST_TIMEOUT_MS / 1000)
+    worker.join(timeout=ceiling)
 
     if worker.is_alive():
         # Abandoned, not killed: Python cannot interrupt a thread blocked in
         # a socket read. It dies with the process, and one leaked thread is
         # far cheaper than losing a multi-hour run to a single stuck page.
-        raise TimeoutError(
-            f"Gemini call exceeded {settings.GEMINI_REQUEST_TIMEOUT_MS}ms"
-        )
+        raise TimeoutError(f"Gemini call exceeded {ceiling:.0f}s")
     if "error" in box:
         raise box["error"]
     return box["value"]
