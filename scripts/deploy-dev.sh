@@ -23,6 +23,29 @@ GCID=$(read_env GOOGLE_CLIENT_ID)
 GCSECRET=$(read_env GOOGLE_CLIENT_SECRET)
 FALLBACK=$(read_env FALLBACK_API_KEY)
 
+# Read from .env like the rest, but default to true rather than empty:
+# an unset value here would send the assistant back to trying Gemini
+# first, which is the path that hangs once its quota is spent.
+PREFER_FALLBACK=$(read_env PREFER_FALLBACK_FOR_INTERACTIVE)
+[ -z "$PREFER_FALLBACK" ] && PREFER_FALLBACK=true
+
+# CloudFormation rejects anything outside the AllowedValues, and it does
+# so after the upload rather than before, so a stray "TRUE" from .env
+# costs a full round trip to find out.
+case "$PREFER_FALLBACK" in
+  true|false) ;;
+  True|TRUE|1|yes)  PREFER_FALLBACK=true ;;
+  False|FALSE|0|no) PREFER_FALLBACK=false ;;
+  *) echo "PREFER_FALLBACK_FOR_INTERACTIVE must be true or false, got '$PREFER_FALLBACK'" >&2
+     exit 1 ;;
+esac
+
+if [ -z "$FALLBACK" ] && [ "$PREFER_FALLBACK" = true ]; then
+  echo "PREFER_FALLBACK_FOR_INTERACTIVE is true but FALLBACK_API_KEY is empty," >&2
+  echo "which would route the assistant to a provider that is not configured." >&2
+  exit 1
+fi
+
 if [ -z "$NEON" ]; then
   echo "NEON_DATABASE_URL is empty in $ENV_FILE" >&2
   exit 1
@@ -70,6 +93,11 @@ else
   echo "google redirect: not yet known (first deploy); re-run after this one"
 fi
 
+# Stage and build before deploying, because `sam deploy` on its own
+# uploads whatever is in .aws-sam/build from the last run. Deploying a
+# code change without these two steps ships the previous code with the
+# new parameters, which looks like a deploy that silently did nothing --
+# the config changes, the behaviour does not.
 # build-lambda.sh stages one source tree per function and ends with
 # `sam build --use-container`, which is the part that must not be
 # skipped: a plain `sam build` on this Mac picks macOS arm64 wheels,
@@ -93,5 +121,6 @@ sam deploy \
     GoogleClientId="$GCID" \
     GoogleClientSecret="$GCSECRET" \
     FallbackApiKey="$FALLBACK" \
+    PreferFallbackForInteractive="$PREFER_FALLBACK" \
     GoogleRedirectUri="$REDIRECT" \
     FrontendOrigin=https://gateai-one.vercel.app
