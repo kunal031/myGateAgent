@@ -156,6 +156,14 @@ _retry = retry(
     reraise=True,
 )
 
+#: The ceiling for a call a student is waiting on, in seconds.
+#:
+#: Far below GEMINI_REQUEST_TIMEOUT_MS, which is sized for a vision page
+#: or a long batch generation and is the wrong budget for an answer
+#: someone is watching a spinner for. At 180s the retry stack could spend
+#: minutes on one question and still return nothing.
+INTERACTIVE_TIMEOUT_SECONDS = 45.0
+
 
 @_retry
 def generate_text(
@@ -186,6 +194,7 @@ def generate_text(
         response = _with_deadline(
             get_client().models.generate_content,
             model=model, contents=prompt, config=config,
+            deadline=INTERACTIVE_TIMEOUT_SECONDS if interactive else None,
         )
         return (response.text or "").strip()
     except Exception as exc:
@@ -311,6 +320,7 @@ def generate_grounded(
                 temperature=temperature,
                 tools=[types.Tool(google_search=types.GoogleSearch())],
             ),
+            deadline=INTERACTIVE_TIMEOUT_SECONDS if interactive else None,
         )
     except Exception as exc:
         # generate_text has fallen back to the second provider on a quota
