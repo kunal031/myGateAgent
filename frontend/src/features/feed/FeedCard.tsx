@@ -200,6 +200,11 @@ export default function FeedCard({
           </button>
         </ActionHint>
 
+        {/* Now the only controls that record progress, since "Got it" is
+            inert. Widened from w-11 to a shared flex slot: at 44px beside
+            two full-width buttons they read as an afterthought, which is
+            the wrong weight for the only thing that moves a concept
+            forward. */}
         {card.concept_id != null && onMarkConcept && (
           <>
             <ActionHint label="Learned — mark the whole concept known, without going through its other cards">
@@ -208,7 +213,7 @@ export default function FeedCard({
                 onClick={() => onMarkConcept(card.concept_id as number, "learn")}
                 title="Learned — mark the whole concept known"
                 aria-label={`Mark the concept behind ${card.title} as learned`}
-                className="flex min-h-11 w-11 items-center justify-center text-[13px] font-extrabold"
+                className="flex min-h-11 w-14 items-center justify-center text-[13px] font-extrabold"
                 style={{
                   color: "var(--ink)",
                   borderLeft: "var(--line-width) solid var(--line)",
@@ -223,7 +228,7 @@ export default function FeedCard({
                 onClick={() => onMarkConcept(card.concept_id as number, "revise")}
                 title="Revised — you have been back over this concept"
                 aria-label={`Mark the concept behind ${card.title} as revised`}
-                className="flex min-h-11 w-11 items-center justify-center text-[13px] font-extrabold"
+                className="flex min-h-11 w-14 items-center justify-center text-[13px] font-extrabold"
                 style={{
                   color: "var(--ink)",
                   borderLeft: "var(--line-width) solid var(--line)",
