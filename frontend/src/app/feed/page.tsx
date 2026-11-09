@@ -14,8 +14,7 @@ import {
 } from "@/features/feed/useInfiniteFeed";
 import {
   AssistantLanguage, FeedCardItem, FeedFilters, SubjectItem,
-  askAssistant, deleteUserCard, fetchSyllabus, markCardRecalled,
-  markConcept,
+  askAssistant, deleteUserCard, fetchSyllabus, markConcept,
 } from "@/lib/api";
 
 const MODES = [
@@ -33,16 +32,12 @@ const CARD_TYPES = [
   { value: "SHORTCUT", label: "Shortcuts" },
 ];
 
-/** Exit animation length; matches the card's transition duration. */
-const LEAVE_MS = 260;
-
 export default function FeedPage() {
   const [subjects, setSubjects] = useState<SubjectItem[]>([]);
   const [subjectSlug, setSubjectSlug] = useState("all");
   const [topicSlug, setTopicSlug] = useState("all");
   const [cardType, setCardType] = useState("all");
   const [mode, setMode] = useState("all");
-  const [leaving, setLeaving] = useState<Set<number>>(new Set());
   const [threadId, setThreadId] = useState<number | null>(null);
   // The card Explain was pressed on. Set before the request goes out so the
   // modal can open at once showing the card, rather than after the answer
@@ -92,24 +87,6 @@ export default function FeedPage() {
         .catch(() => {});
     },
     [],
-  );
-
-  const handleMastered = useCallback(
-    (id: number) => {
-      setLeaving((prev) => new Set(prev).add(id));
-      void markCardRecalled(id)
-        .then(() => setProgressKey((n) => n + 1))
-        .catch(() => {});
-      window.setTimeout(() => {
-        void dismiss(id);
-        setLeaving((prev) => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
-      }, LEAVE_MS);
-    },
-    [dismiss],
   );
 
   const handleExplain = useCallback(
@@ -314,8 +291,6 @@ export default function FeedPage() {
             <FeedCard
               key={card.id}
               card={card}
-              leaving={leaving.has(card.id)}
-              onMastered={handleMastered}
               onExplain={handleExplain}
               onMarkConcept={handleMarkConcept}
               onEdit={openComposer}
