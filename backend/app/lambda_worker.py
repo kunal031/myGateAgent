@@ -29,8 +29,22 @@ def handler(event, context):
     # 10-second limit, and a slow import there fails with no useful error.
     from .core.background import JOBS
     from .core.database import SessionLocal
-    # Importing the API module registers every job as a side effect.
-    from .api import papers  # noqa: F401
+
+    # Every module that owns a @register job must be imported here, or the
+    # decorator never runs and the job is missing from JOBS.
+    #
+    # assistant was missing, and the failure was invisible from the UI:
+    # /api/assistant/ask writes a "pending" placeholder, dispatches, and
+    # returns 200 straight away, so the API looked healthy. The worker
+    # then raised KeyError before reaching the try/except that records a
+    # failure on the row -- so the message stayed "pending" for ever and
+    # the client polled an answer that was never coming. Every question
+    # asked in production failed this way.
+    #
+    # Imported here rather than at module level because Lambda's init
+    # phase has a hard 10-second limit and a slow import there fails with
+    # no useful error.
+    from .api import assistant, papers  # noqa: F401
 
     name = event.get("job")
     payload = event.get("payload") or {}
