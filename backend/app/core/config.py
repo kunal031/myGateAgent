@@ -203,6 +203,28 @@ class Settings(BaseSettings):
     # Kept for compatibility; the two budgets above supersede it.
     GEMINI_MAX_REQUESTS_PER_DAY: int = 20000
 
+    #: Send the interactive path -- the assistant, intent parsing and
+    #: context grading -- straight to the fallback provider instead of
+    #: trying Gemini first.
+    #:
+    #: This is for the case where Gemini's generation quota is spent
+    #: within minutes of the day starting. Treating the second provider
+    #: as the fallback then costs a guaranteed failure before every
+    #: answer: Gemini's 429 arrives only after the request has been
+    #: made, and on a 180-second ceiling with a retrying client that
+    #: wasted wait is what the student experiences as "it never
+    #: answered". Going direct removes the doomed attempt.
+    #:
+    #: Embeddings are deliberately NOT covered. Groq serves no embedding
+    #: model, so `gemini-embedding-001` stays the only way to query the
+    #: 25,074 indexed chunks -- and without it hybrid retrieval loses its
+    #: semantic half and the assistant loses its book citations, which is
+    #: the one thing this project refuses to give up. Embeddings also
+    #: draw on a separate, far larger free allowance than generation and
+    #: are disk-cached per query, so keeping them on Gemini costs
+    #: essentially nothing of the quota that actually runs out.
+    PREFER_FALLBACK_FOR_INTERACTIVE: bool = False
+
     # ---- Paths ----
     DATA_DIR: Path = BASE_DIR / "data"
     INBOX_DIR: Path = BASE_DIR / "data" / "inbox"
