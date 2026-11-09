@@ -67,6 +67,23 @@ def test_an_http_date_header_falls_through_to_the_body():
     assert got == pytest.approx(2.0)
 
 
+def test_the_waits_the_free_tier_actually_asks_for_are_honoured():
+    """Pins the ceiling against observed values, not a guessed one.
+
+    Measured: a question costs ~4,000 tokens of an 8,000-per-minute
+    bucket, and Groq asked for 29.4s and 30.4s once two were in flight.
+    A 25s cap turned those into failures for the sake of five seconds.
+    """
+    for seconds in (29.3625, 30.3975):
+        got = fallback._retry_after_seconds(
+            FakeResponse(f"try again in {seconds}s")
+        )
+        assert got == pytest.approx(seconds), (
+            f"a {seconds}s wait is within what the free tier asks for and "
+            "must be waited out rather than failed"
+        )
+
+
 def test_a_long_wait_is_refused():
     """Past the ceiling, waiting is worse than failing.
 

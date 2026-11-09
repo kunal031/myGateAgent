@@ -70,10 +70,18 @@ def configured() -> bool:
     return bool(settings.FALLBACK_API_KEY.strip())
 
 
-#: Ceiling on how long a 429 may ask us to wait. Past this, waiting is
-#: worse than failing: the student is watching a spinner, and a minute
-#: of silence is indistinguishable from the hang this all replaced.
-MAX_RETRY_AFTER_SECONDS = 25.0
+#: Ceiling on how long a 429 may ask us to wait.
+#:
+#: 35s, not 25s. Measured against the free tier: a question costs about
+#: 4,000 tokens of an 8,000-per-minute bucket, so two in quick
+#: succession leave the third waiting most of a minute, and Groq's own
+#: asks were 29.4s and 30.4s -- just over a 25s cap, which turned a
+#: wait into a failure for the sake of five seconds.
+#:
+#: Still bounded, because the worker has 900s and the student has
+#: patience: past this the honest answer is that the free tier is full,
+#: which the caller turns into a message saying so.
+MAX_RETRY_AFTER_SECONDS = 35.0
 
 
 def _retry_after_seconds(response: "httpx.Response") -> float | None:

@@ -132,6 +132,25 @@ def ask(payload: AskRequest, db: Session = Depends(get_db),
     }
 
 
+def _student_facing_error(exc: BaseException) -> str:
+    """Turn a provider failure into something worth reading.
+
+    "Fallback provider is rate limited" is accurate and useless to
+    someone mid-study: it names our plumbing and implies a bug. The
+    free tier's token-per-minute budget fits about two questions a
+    minute, so the honest answer is to say so and name the wait.
+    """
+    from ..ai.fallback import FallbackRateLimited
+
+    if isinstance(exc, FallbackRateLimited):
+        return (
+            "The free AI tier only allows a couple of questions a minute, "
+            "and this one went over. Wait about a minute and ask again — "
+            "your place in the conversation is kept."
+        )
+    return str(exc)[:500]
+
+
 @register("answer_question")
 def answer_question(db: Session, *, message_id: int, query: str,
                     language: str, subject_id: int | None = None,
@@ -170,7 +189,7 @@ def answer_question(db: Session, *, message_id: int, query: str,
         # that asked has long since returned, so this is the only place
         # the student can be told.
         message.status = "failed"
-        message.error = str(exc)[:500]
+        message.error = _student_facing_error(exc)
     finally:
         db.commit()
 
