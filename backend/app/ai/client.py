@@ -165,6 +165,18 @@ _retry = retry(
 INTERACTIVE_TIMEOUT_SECONDS = 45.0
 
 
+def _prefer_fallback() -> bool:
+    """Whether the interactive path should skip Gemini entirely.
+
+    Both halves are required: asking to prefer the fallback while none is
+    configured would disable the assistant rather than reroute it, so an
+    unset key falls back to the normal Gemini-first path.
+    """
+    return bool(
+        settings.PREFER_FALLBACK_FOR_INTERACTIVE and fallback.configured()
+    )
+
+
 @_retry
 def generate_text(
     prompt: str,
@@ -181,6 +193,19 @@ def generate_text(
     `interactive=True` draws on a separate budget, so a request someone is
     waiting on does not queue behind a batch run holding the shared bucket.
     """
+    if interactive and _prefer_fallback():
+        # No Gemini attempt at all. Its quota is spent, so trying first
+        # buys nothing and costs the student the full request timeout
+        # before the 429 arrives.
+        return fallback.generate_text(
+            prompt,
+            system_instruction=system_instruction,
+            response_mime_type=response_mime_type,
+            response_schema=response_schema,
+            temperature=temperature,
+            timeout=INTERACTIVE_TIMEOUT_SECONDS,
+        )
+
     limiter = interactive_limiter if interactive else generation_limiter
     limiter.acquire()
 
@@ -213,6 +238,7 @@ def generate_text(
             response_mime_type=response_mime_type,
             response_schema=response_schema,
             temperature=temperature,
+            timeout=INTERACTIVE_TIMEOUT_SECONDS if interactive else None,
         )
 
 
@@ -307,6 +333,24 @@ def generate_grounded(
     Returns the text plus the cited sources, so web-derived content can
     always be traced back to a URL.
     """
+    if interactive and _prefer_fallback():
+        # Same reasoning as generate_text, with one extra consequence: the
+        # fallback has no Search tool, so this returns no web citations.
+        # The caller (assistant._web_lookup) treats an empty citation list
+        # as "the web added nothing" and still answers from the corpus,
+        # which is the grounded half that actually carries the books.
+        logger.info(
+            "Interactive grounded call routed to %s; no web citations",
+            settings.FALLBACK_MODEL,
+        )
+        return {
+            "text": fallback.generate_text(
+                prompt, temperature=temperature,
+                timeout=INTERACTIVE_TIMEOUT_SECONDS,
+            ).strip(),
+            "citations": [],
+        }
+
     # Grounded calls have their own daily budget, but a request someone is
     # waiting on must not queue behind a batch of them either.
     (interactive_limiter if interactive else search_limiter).acquire()
