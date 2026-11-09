@@ -22,7 +22,11 @@ const TYPE_META: Record<string, { label: string; icon: LucideIcon }> = {
 
 interface Props {
   card: FeedCardItem;
-  onMastered: (id: number) => void;
+  /** Records a single-card recall. Currently unused: the "Got it" button
+   *  that called it is disabled, so nothing invokes this. Kept on the
+   *  interface (and optional) so re-enabling the button is a one-line
+   *  change rather than re-threading the prop from the feed page. */
+  onMastered?: (id: number) => void;
   /** Opens the assistant with this card already in context. */
   onExplain: (card: FeedCardItem) => void;
   /** Mark the whole concept, not just this card. */
@@ -35,7 +39,7 @@ interface Props {
 }
 
 export default function FeedCard({
-  card, onMastered, onExplain, onMarkConcept, onEdit, onDelete,
+  card, onExplain, onMarkConcept, onEdit, onDelete,
   leaving = false,
 }: Props) {
   const meta = TYPE_META[card.card_type] ?? TYPE_META.CONCEPT;
@@ -163,17 +167,33 @@ export default function FeedCard({
         style={{ borderTop: "var(--line-width) solid var(--line)" }}
       >
         {/* Wording says what each one changes, because the difference
-            between them is not guessable: "Got it" is about this card,
-            L and R are about the whole concept behind it. */}
+            between them is not guessable: "Got it" was about this card,
+            L and R are about the whole concept behind it.
+
+            "Got it" is deliberately inert. It is kept visible rather than
+            removed because it is the only control that writes
+            CardView.recall_count, which is what starts the 1/3/7/21/60-day
+            spacing ladder -- dropping the button outright would silently
+            leave the feed's 25% review slot permanently empty and report
+            every retention figure as zero. Disabled rather than deleted so
+            the footer keeps its three-way split and the mechanic can be
+            turned back on by restoring onClick.
+
+            aria-disabled, not `disabled`: a `disabled` button is removed
+            from the accessibility tree and stops announcing its label, so
+            a screen-reader user gets an unexplained gap where a control
+            used to be. This way it is announced and explained. pointer
+            events are dropped so the hint cannot imply it still acts. */}
         <ActionHint grow
-          label="This card is learned — hide it and bring it back for review later">
+          label="Marking single cards is off — use L to mark the whole concept learned, or R once you have revised it">
           <button
             type="button"
-            onClick={() => onMastered(card.id)}
-            title="This card is learned — hide it and review it later"
-            className="flex min-h-11 flex-1 items-center justify-center gap-1.5 text-[13px] font-bold transition-colors"
-            style={{ color: "var(--ink)" }}
-            aria-label={`Mark ${card.title} as read`}
+            aria-disabled="true"
+            tabIndex={-1}
+            title="Marking single cards is off — use L or R instead"
+            className="pointer-events-none flex min-h-11 flex-1 cursor-default items-center justify-center gap-1.5 text-[13px] font-bold transition-colors"
+            style={{ color: "var(--ink-soft)", opacity: 0.55 }}
+            aria-label={`Marking ${card.title} on its own is turned off; use L or R to mark the concept`}
           >
             <Check className="h-3.5 w-3.5" />
             Got it
