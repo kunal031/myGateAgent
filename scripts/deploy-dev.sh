@@ -50,6 +50,13 @@ else
   echo "google redirect: not yet known (first deploy); re-run after this one"
 fi
 
+# build-lambda.sh stages one source tree per function and ends with
+# `sam build --use-container`, which is the part that must not be
+# skipped: a plain `sam build` on this Mac picks macOS arm64 wheels,
+# which import fine here and fail on Lambda.
+echo "staging and building..."
+scripts/build-lambda.sh
+
 sam deploy \
   --stack-name gateai-dev \
   --region ap-southeast-1 \
